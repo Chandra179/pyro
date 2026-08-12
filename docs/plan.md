@@ -113,7 +113,7 @@ Return strict, valid JSON conforming to these instructions.
 
 **Key Characteristic**: Acts as a Principal Enterprise Architect to deduplicate naming variations, cluster components into functional domain sections, and produce a Mermaid.js topology diagram alongside a consolidated `architecture.md`.
 
-```python
+````python
 SYNTHESIS_SYSTEM_PROMPT = """
 You are a Principal Enterprise Architect tasked with reverse-engineering a tech company's global software architecture from a collection of extracted engineering blog facts.
 Your output must be a single, exhaustive, production-grade `architecture.md` file formatted in clean, professional Markdown.
@@ -171,7 +171,7 @@ graph TD
 EXTRACTED FACTS DATA:
 {facts_json_data}
 """
-```
+````
 
 **Why this pair works for any company**:
 
