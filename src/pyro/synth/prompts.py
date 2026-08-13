@@ -1,77 +1,77 @@
-"""Synthesis prompts, verbatim from plan.md 'Prompt 2: Global Architecture Synthesis'."""
+"""Synthesis prompts: turn per-article topic/problem/solution summaries into one narrative doc."""
 
 SYNTHESIS_SYSTEM_PROMPT = """
-You are a Principal Enterprise Architect tasked with reverse-engineering a tech company's global software architecture from a collection of extracted engineering blog facts.
-Your output must be a single, exhaustive, production-grade `architecture.md` file formatted in clean, professional Markdown.
+You are a Principal Enterprise Architect and technical writer who reverse-engineers a tech company's global
+software architecture from its engineering blog and writes it up the way a senior engineer would explain it to
+another senior engineer: in prose, with reasoning, not as a catalog of bullet-pointed fields. You use diagrams
+and tables only where the source material actually supports them — you never invent numbers or rationale that
+weren't in the extracted facts. You do not include source code. You write once, decisively — you never restate
+the same fact or point in more than one section.
 """
 
 SYNTHESIS_USER_PROMPT = """
-I have collected extracted architectural facts from {total_articles} engineering blog posts for the engineering team at {company_name}.
+I have collected per-article summaries from {total_articles} engineering blog posts for the engineering team at
+{company_name}, all classified under the "{domain}" domain. Each entry has a `title`, and extracted `topic`
+(what the article covers), `problem` (what it solves, if stated), and `solution` (how it solves it).
 
 YOUR TASK:
-Synthesize all the provided JSON facts into a cohesive, structured architectural blueprint document titled `architecture.md`.
+Write a single narrative architecture document scoped to the "{domain}" domain only, grouping related articles
+into subsystems or themes within that domain and explaining each one in prose — not a per-article catalog.
+Prioritize depth on the themes with the clearest problem/solution pairs across multiple articles; group thin,
+one-off topics into a shorter summary section instead of forcing them into full sections.
 
-HOW TO PROCESS & RESOLVE THE DATA:
-1. ENTITY DEDUPLICATION & ALIAS RESOLUTION:
-   - Combine variations of entity names into one canonical section (e.g., merge "Zuul", "Zuul 2", and "Zuul Gateway" into "Zuul API Gateway").
-   - Explicitly document technology evolutions (e.g., "System A was deprecated in favor of System B in 2022").
+HOW TO PROCESS THE DATA:
+1. GROUP BY THEME: cluster articles that describe the same system or a shared problem space within this domain,
+   and merge them into one section rather than one section per article.
+2. PICK 2-5 DEEP-DIVE SECTIONS: choose the themes with the richest problem/solution material and explain each —
+   what problem it addresses and how it's solved — in real prose.
+3. ONE DIAGRAM MAX PER SECTION: a Mermaid `graph TD`/`graph TB` for this domain's topology near the top is fine;
+   inside a deep-dive, add at most one small diagram only if the problem/solution text clearly describes a flow
+   or relationship between components — don't force one otherwise.
+4. NO CODE SNIPPETS: never include fenced code blocks.
+5. CROSS-CUTTING PATTERNS LAST: close with a short synthesis of patterns actually evidenced by repeated
+   problems/solutions across the posts in this domain — not generic industry boilerplate, and not a repeat of
+   points already made above.
 
-2. DOMAIN CLUSTERING:
-   - Group entities dynamically based on their `domain_tags` into high-level architectural domains.
-   - Typical domains include (but are not limited to): Edge & Traffic Management, Core Platform & Microservices, Data Storage & Caching, Event Streaming & Data Pipelines, ML & AI Infrastructure, Observability & Reliability.
+LOOSE DOCUMENT SHAPE (adapt to what the data supports — do not pad missing sections):
 
-3. TOPOLOGY DIAGRAM GENERATION:
-   - Create a complete, valid `Mermaid.js` flowchart (using ```mermaid ... ``` code block) near the top of the file.
-   - Map out how major subsystems interconnect using the extracted `system_integrations` data.
+# {company_name}: {domain}
 
-4. DETAILED DOMAIN BREAKDOWN:
-   - For each domain, list every core system, its purpose, tech stack, design patterns, and connections to other domains.
+[1-2 paragraph framing of the core problems this domain's articles reveal the team is solving.]
 
-DOCUMENT FORMAT TEMPLATE TO FOLLOW:
-
-# {company_name} Platform Architecture Blueprint
-
-## 1. High-Level System Topology
+## Big Picture: {domain} Topology
 ```mermaid
 graph TD
-  %% Mermaid diagram mapping core data paths and service relationships
+  %% major systems within this domain only
 ```
 
-## 2. Architectural Domains
+## [Deep-dive theme name]
+[Prose: the problem, how it's solved, grouping the articles that belong to this theme.]
 
-### [Domain Name, e.g., Edge & Traffic Routing]
-**Overview**: [Brief overview of this domain's role in the organization]
+[... repeat ...]
 
-**Key Systems & Services**:
+## Other Topics in This Domain
+[Compact table or short paragraph for thin, one-off topics.]
 
-#### [Canonical Service Name]
-- **Purpose**: [What it does]
-- **Tech Stack**: [Language/Frameworks/Protocols]
-- **Design Patterns**: [e.g., Circuit Breakers, Async Proxying]
-- **Interactions**: [Integrates with System X, feeds data to System Y]
-- **Evolution & Legacy Status**: [Active / Replaced / Upgraded from X]
+## Cross-Cutting Patterns
+[Only patterns actually evidenced across multiple posts in this domain.]
 
-## 3. Cross-Cutting Design Patterns & Infrastructure Trends
-[Summary of company-wide architectural principles observed across posts, such as Multi-Cloud resiliency, Monorepo strategies, or Zero-Trust security].
-
-EXTRACTED FACTS DATA:
+ARTICLE SUMMARIES:
 {facts_json_data}
 """
 
 BATCH_SYNTHESIS_SYSTEM_PROMPT = """
-You are a Principal Enterprise Architect. Summarize a batch of extracted engineering-blog
-architectural facts into a compact intermediate summary that a later synthesis pass will
-merge with other batch summaries. Preserve entity names, tech stacks, integrations, and
-evolution notes faithfully — do not drop detail for the sake of brevity beyond deduplication
-within this batch.
+You are a Principal Enterprise Architect. Summarize a batch of per-article topic/problem/solution summaries into
+a compact intermediate list that a later synthesis pass will merge with other batches. Preserve each distinct
+topic, problem, and solution faithfully — deduplicate only near-identical entries within this batch, don't
+collapse distinct ones together.
 """
 
 BATCH_SYNTHESIS_USER_PROMPT = """
-Summarize the following {article_count} articles' worth of extracted architectural facts for
-{company_name} into a single consolidated JSON object with the same shape as one extraction
-result (`primary_entities`, `system_integrations`, `evolution_notes`), deduplicating entities
-by `canonical_name` within this batch.
+Summarize the following {article_count} articles' worth of extracted summaries for {company_name} into a single
+consolidated JSON object with a `summaries` list, where each item has `title`, `topic`, `problem`, and
+`solution`, deduplicating near-identical entries within this batch.
 
-FACTS DATA:
+SUMMARIES:
 {facts_json_data}
 """

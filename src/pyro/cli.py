@@ -13,7 +13,7 @@ from pyro.db import open_db
 from pyro.extract.pipeline import run_extraction
 from pyro.scrape.fetch import scrape_urls
 from pyro.scrape.sitemap import fetch_sitemap_urls
-from pyro.synth.pipeline import run_synthesis
+from pyro.synth.pipeline import run_synthesis, slugify
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO)
@@ -26,17 +26,19 @@ def scrape(
     company_name: str = typer.Option(...),
     sitemap_url: str = typer.Option(...),
     db: Path = typer.Option(...),
-    concurrency: int = typer.Option(5),
+    concurrency: int | None = typer.Option(None, help="Defaults to config/config.yaml scrape.concurrency"),
     limit: int | None = typer.Option(None),
+    settings: Settings | None = None,
 ) -> None:
     """Discover URLs from sitemap.xml and render+store raw HTML."""
+    settings = settings or Settings()
 
     async def _run() -> None:
-        urls = await fetch_sitemap_urls(sitemap_url)
+        urls = await fetch_sitemap_urls(sitemap_url, config=settings.sitemap)
         typer.echo(f"discovered {len(urls)} URLs from sitemap")
         with open_db(db) as database:
             count = await scrape_urls(
-                urls, database, company_name, concurrency=concurrency, limit=limit
+                urls, database, company_name, concurrency=concurrency, limit=limit, config=settings.scrape
             )
         typer.echo(f"scraped {count} new articles")
 
@@ -47,13 +49,14 @@ def scrape(
 def clean(
     db: Path = typer.Option(...),
     limit: int | None = typer.Option(None),
+    settings: Settings | None = None,
 ) -> None:
     """Strip boilerplate and collapse code blocks for all un-cleaned articles."""
-    settings = Settings()
+    settings = settings or Settings()
     with open_db(db) as database:
         articles = database.fetch_unprocessed("clean", limit=limit)
         for article in articles:
-            cleaned = clean_html(article.raw_html, settings.code_block_line_threshold)
+            cleaned = clean_html(article.raw_html, settings.code_block_line_threshold, settings.clean)
             database.mark_cleaned(article.id, cleaned)
         typer.echo(f"cleaned {len(articles)} articles")
 
@@ -62,9 +65,10 @@ def clean(
 def extract(
     db: Path = typer.Option(...),
     limit: int | None = typer.Option(None),
+    settings: Settings | None = None,
 ) -> None:
     """Run LLM extraction on all cleaned, unextracted articles."""
-    settings = Settings()
+    settings = settings or Settings()
     with open_db(db) as database:
         count = asyncio.run(run_extraction(database, settings, limit=limit))
     typer.echo(f"extracted {count} articles")
@@ -74,14 +78,18 @@ def extract(
 def synthesize(
     db: Path = typer.Option(...),
     company_name: str = typer.Option(...),
-    out: Path = typer.Option(Path("architecture.md")),
+    out_dir: Path = typer.Option(Path("output")),
+    settings: Settings | None = None,
 ) -> None:
-    """Merge all architectural facts for company_name into architecture.md."""
-    settings = Settings()
+    """Synthesize one architecture doc per domain for company_name into out_dir/."""
+    settings = settings or Settings()
     with open_db(db) as database:
-        content = asyncio.run(run_synthesis(database, settings, company_name))
-    out.write_text(content)
-    typer.echo(f"wrote {out}")
+        docs = asyncio.run(run_synthesis(database, settings, company_name))
+    out_dir.mkdir(parents=True, exist_ok=True)
+    for domain, content in docs.items():
+        path = out_dir / f"architecture-{slugify(domain)}.md"
+        path.write_text(content)
+        typer.echo(f"wrote {path}")
 
 
 @app.command(name="run-all")
@@ -89,9 +97,10 @@ def run_all(
     company_name: str = typer.Option(...),
     sitemap_url: str = typer.Option(...),
     db: Path = typer.Option(...),
-    out: Path = typer.Option(Path("architecture.md")),
-    concurrency: int = typer.Option(5),
+    out_dir: Path = typer.Option(Path("output")),
+    concurrency: int | None = typer.Option(None, help="Defaults to config/config.yaml scrape.concurrency"),
     limit: int | None = typer.Option(None, help="Cap articles scraped, for sample validation runs"),
+    settings: Settings | None = None,
 ) -> None:
     """Run scrape -> clean -> extract -> synthesize end-to-end."""
     scrape(
@@ -100,10 +109,11 @@ def run_all(
         db=db,
         concurrency=concurrency,
         limit=limit,
+        settings=settings,
     )
-    clean(db=db)
-    extract(db=db)
-    synthesize(db=db, company_name=company_name, out=out)
+    clean(db=db, settings=settings)
+    extract(db=db, settings=settings)
+    synthesize(db=db, company_name=company_name, out_dir=out_dir, settings=settings)
 
 
 if __name__ == "__main__":

@@ -19,14 +19,14 @@ from pyro.clean.chunk import chunk_text
 from pyro.config import Settings
 from pyro.db import Database
 from pyro.extract.prompts import EXTRACTION_SYSTEM_PROMPT, EXTRACTION_USER_PROMPT
-from pyro.extract.schema import ExtractedFacts, merge_facts
+from pyro.extract.schema import DOMAINS, ExtractedFacts, merge_facts
 from pyro.router import concrete_model_params
 
 logger = logging.getLogger(__name__)
 
 
 async def extract_chunk(
-    title: str, url: str, content: str, model_params: list[dict]
+    title: str, url: str, content: str, model_params: list[dict], domains: list[str] = DOMAINS
 ) -> ExtractedFacts:
     """Call through the concrete model list, validating each response against the
     Pydantic schema and advancing to the next model on any failure."""
@@ -39,7 +39,7 @@ async def extract_chunk(
                     {
                         "role": "user",
                         "content": EXTRACTION_USER_PROMPT.format(
-                            title=title, url=url, content=content
+                            title=title, url=url, content=content, domains=", ".join(domains)
                         ),
                     },
                 ],
@@ -69,9 +69,9 @@ async def extract_article(
         overlap_tokens=settings.chunk_overlap_tokens,
     )
     facts_list = [
-        await extract_chunk(title, url, chunk, model_params) for chunk in chunks
+        await extract_chunk(title, url, chunk, model_params, settings.domains) for chunk in chunks
     ]
-    return merge_facts(facts_list)
+    return merge_facts(facts_list, settings.domains)
 
 
 async def run_extraction(db: Database, settings: Settings, limit: int | None = None) -> int:

@@ -7,19 +7,16 @@ import re
 import trafilatura
 from bs4 import BeautifulSoup, Tag
 
-_BOILERPLATE_TAGS = ("nav", "header", "footer", "aside", "script", "style", "noscript", "form")
-_BOILERPLATE_SELECTORS = (
-    "[class*=comment]",
-    "[id*=comment]",
-    "[class*=related]",
-    "[class*=sidebar]",
-    "[class*=newsletter]",
-    "[class*=subscribe]",
-    "[class*=cookie]",
-)
+from pyro.config import CleanConfig
+
+_DEFAULT_CLEAN_CONFIG = CleanConfig()
 
 
-def clean_html(raw_html: str, code_block_line_threshold: int = 15) -> str:
+def clean_html(
+    raw_html: str,
+    code_block_line_threshold: int = 15,
+    clean_config: CleanConfig = _DEFAULT_CLEAN_CONFIG,
+) -> str:
     """Strip nav/boilerplate, collapse large code blocks, return normalized article text.
 
     Main-content extraction is delegated to trafilatura (handles arbitrary blog
@@ -36,11 +33,11 @@ def clean_html(raw_html: str, code_block_line_threshold: int = 15) -> str:
     )
     soup = BeautifulSoup(extracted or raw_html, "lxml")
 
-    for tag_name in _BOILERPLATE_TAGS:
+    for tag_name in clean_config.boilerplate_tags:
         for tag in soup.find_all(tag_name):
             tag.decompose()
 
-    for selector in _BOILERPLATE_SELECTORS:
+    for selector in clean_config.boilerplate_selectors:
         for tag in soup.select(selector):
             tag.decompose()
 

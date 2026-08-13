@@ -1,4 +1,4 @@
-.PHONY: install test lint sample-run
+.PHONY: install test lint run sample-run
 
 install:
 	uv sync
@@ -10,12 +10,12 @@ test:
 lint:
 	uv run ruff check .
 
-# Validate the pipeline end-to-end on a small Netflix TechBlog sample,
-# per docs/plan.md "Success Criteria Before Scaling Up". Requires OPENROUTER_API_KEY.
-sample-run:
-	uv run pyro run-all \
-		--company-name Netflix \
-		--sitemap-url https://netflixtechblog.com/sitemap/sitemap.xml \
-		--db data/netflix.db \
-		--out architecture.md \
-		--limit 10
+# Runs the full pipeline (scrape -> clean -> extract -> synthesize) for the
+# company/blog configured at the top of run_pipeline.py — edit that file to
+# point at a different blog, or to override config/config.yaml tuning knobs
+# via its OVERRIDES dict. Requires OPENROUTER_API_KEY.
+run:
+	uv run python run_pipeline.py
+
+# Alias matching docs/plan.md "Success Criteria Before Scaling Up".
+sample-run: run

@@ -1,86 +1,52 @@
-"""Loose extraction schema (plan.md 'Prompt 1: Generic Fact Extraction')."""
+"""Simple extraction schema: what an article is about, the problem, the solution, and its domain."""
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from collections.abc import Iterable
 
+from pydantic import BaseModel
 
-class Entity(BaseModel):
-    canonical_name: str
-    domain_tags: list[str] = Field(default_factory=list)
-    description: str = ""
-    tech_stack: list[str] = Field(default_factory=list)
-    patterns_and_concepts: list[str] = Field(default_factory=list)
+from pyro.config import Settings
 
-
-class Integration(BaseModel):
-    source: str
-    target: str
-    relationship_type: str
+# Fixed domain taxonomy (config/config.yaml: `domains`) so classification stays
+# consistent across articles instead of the LLM inventing free-form labels per
+# call. "Other" is the required fallback for anything that doesn't fit. Kept
+# as a module-level default so callers (and tests) that don't have a Settings
+# instance handy still get sane behavior.
+DOMAINS: list[str] = Settings().domains
 
 
 class ExtractedFacts(BaseModel):
     is_architectural: bool
-    primary_entities: list[Entity] = Field(default_factory=list)
-    system_integrations: list[Integration] = Field(default_factory=list)
-    evolution_notes: list[str] = Field(default_factory=list)
+    domain: str = "Other"
+    topic: str = ""
+    problem: str = ""
+    solution: str = ""
 
 
-def merge_facts(facts_list: list[ExtractedFacts]) -> ExtractedFacts:
-    """Merge per-chunk extraction results for one article, deduping entities by canonical_name."""
+def merge_facts(facts_list: list[ExtractedFacts], domains: list[str] = DOMAINS) -> ExtractedFacts:
+    """Merge per-chunk extraction results for one article."""
     if not facts_list:
         return ExtractedFacts(is_architectural=False)
 
     is_architectural = any(f.is_architectural for f in facts_list)
-
-    entities_by_name: dict[str, Entity] = {}
-    for facts in facts_list:
-        for entity in facts.primary_entities:
-            key = entity.canonical_name.strip().lower()
-            if key not in entities_by_name:
-                entities_by_name[key] = entity
-            else:
-                existing = entities_by_name[key]
-                merged = existing.model_copy(
-                    update={
-                        "domain_tags": _dedup(existing.domain_tags + entity.domain_tags),
-                        "tech_stack": _dedup(existing.tech_stack + entity.tech_stack),
-                        "patterns_and_concepts": _dedup(
-                            existing.patterns_and_concepts + entity.patterns_and_concepts
-                        ),
-                        "description": existing.description or entity.description,
-                    }
-                )
-                entities_by_name[key] = merged
-
-    integrations: list[Integration] = []
-    seen_integrations: set[tuple[str, str, str]] = set()
-    for facts in facts_list:
-        for integration in facts.system_integrations:
-            key = (integration.source, integration.target, integration.relationship_type)
-            if key not in seen_integrations:
-                seen_integrations.add(key)
-                integrations.append(integration)
-
-    evolution_notes: list[str] = []
-    for facts in facts_list:
-        for note in facts.evolution_notes:
-            if note not in evolution_notes:
-                evolution_notes.append(note)
+    domain = next((f.domain for f in facts_list if f.domain in domains), "Other")
 
     return ExtractedFacts(
         is_architectural=is_architectural,
-        primary_entities=list(entities_by_name.values()),
-        system_integrations=integrations,
-        evolution_notes=evolution_notes,
+        domain=domain,
+        topic=_join_unique(f.topic for f in facts_list),
+        problem=_join_unique(f.problem for f in facts_list),
+        solution=_join_unique(f.solution for f in facts_list),
     )
 
 
-def _dedup(items: list[str]) -> list[str]:
+def _join_unique(parts: Iterable[str]) -> str:
     seen: set[str] = set()
     result: list[str] = []
-    for item in items:
-        if item not in seen:
-            seen.add(item)
-            result.append(item)
-    return result
+    for part in parts:
+        part = part.strip()
+        if part and part not in seen:
+            seen.add(part)
+            result.append(part)
+    return " ".join(result)

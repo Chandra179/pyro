@@ -26,19 +26,12 @@ from litellm import Router
 
 from pyro.config import Settings
 
-_TOKENROUTER_API_BASE = "https://api.tokenrouter.com/v1"
-
 
 def build_model_list(settings: Settings) -> list[dict]:
     model_list: list[dict] = []
 
     if settings.openrouter_api_key:
-        for model_name in (
-            "openrouter/openai/gpt-oss-20b:free",
-            "openrouter/nvidia/nemotron-3-super-120b-a12b:free",
-            "openrouter/google/gemma-4-31b-it:free",
-            "openrouter/openrouter/free",
-        ):
+        for model_name in settings.router.openrouter_free_models:
             model_list.append(
                 {
                     "model_name": "extraction-cascade",
@@ -54,7 +47,7 @@ def build_model_list(settings: Settings) -> list[dict]:
             {
                 "model_name": "extraction-cascade",
                 "litellm_params": {
-                    "model": "groq/llama-3.3-70b-versatile",
+                    "model": settings.router.groq_model,
                     "api_key": settings.groq_api_key,
                 },
             }
@@ -66,7 +59,7 @@ def build_model_list(settings: Settings) -> list[dict]:
             {
                 "model_name": "extraction-cascade",
                 "litellm_params": {
-                    "model": "gemini/gemini-2.5-flash",
+                    "model": settings.router.gemini_model,
                     "api_key": gemini_key,
                 },
             }
@@ -77,8 +70,8 @@ def build_model_list(settings: Settings) -> list[dict]:
             {
                 "model_name": "extraction-cascade",
                 "litellm_params": {
-                    "model": f"openai/{settings.tokenrouter_model}",
-                    "api_base": _TOKENROUTER_API_BASE,
+                    "model": f"openai/{settings.router.tokenrouter_model}",
+                    "api_base": settings.router.tokenrouter_api_base,
                     "api_key": settings.tokenrouter_api_key,
                 },
             }
@@ -89,7 +82,7 @@ def build_model_list(settings: Settings) -> list[dict]:
             {
                 "model_name": "extraction-cascade",
                 "litellm_params": {
-                    "model": "gpt-4o-mini",
+                    "model": settings.router.openai_model,
                     "api_key": settings.openai_api_key,
                 },
             }
@@ -107,9 +100,9 @@ def build_router(settings: Settings | None = None) -> Router:
         )
     return Router(
         model_list=model_list,
-        num_retries=2,
-        cooldown_time=30,
-        allowed_fails=1,
+        num_retries=settings.router.num_retries,
+        cooldown_time=settings.router.cooldown_time,
+        allowed_fails=settings.router.allowed_fails,
     )
 
 

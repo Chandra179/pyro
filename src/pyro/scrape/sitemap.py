@@ -5,33 +5,37 @@ from __future__ import annotations
 import httpx
 from lxml import etree
 
+from pyro.config import SitemapConfig
+
 _NS = {"sm": "http://www.sitemaps.org/schemas/sitemap/0.9"}
 
-# Some blogs (e.g. Medium-hosted ones) serve a JS app shell instead of raw XML
-# to clients without a browser-like User-Agent.
-_HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; pyro-blog-crawler/1.0)"}
-
-# Blog platforms commonly list tag/category/author index pages alongside actual
-# posts in their sitemap. These carry no article content, so they're filtered
-# generically (not company-specific) rather than scraped and wasted on extraction.
-_NON_ARTICLE_PATH_SEGMENTS = ("/tagged/", "/tag/", "/category/", "/categories/", "/author/")
+_DEFAULT_SITEMAP_CONFIG = SitemapConfig()
 
 
-def _is_article_url(url: str) -> bool:
-    return not any(segment in url for segment in _NON_ARTICLE_PATH_SEGMENTS)
+def _is_article_url(
+    url: str, non_article_path_segments: list[str] = _DEFAULT_SITEMAP_CONFIG.non_article_path_segments
+) -> bool:
+    return not any(segment in url for segment in non_article_path_segments)
 
 
-async def fetch_sitemap_urls(sitemap_url: str, client: httpx.AsyncClient | None = None) -> list[str]:
+async def fetch_sitemap_urls(
+    sitemap_url: str,
+    client: httpx.AsyncClient | None = None,
+    config: SitemapConfig = _DEFAULT_SITEMAP_CONFIG,
+) -> list[str]:
     """Fetch a sitemap.xml (or sitemap index) and return every <loc> URL that
     looks like an article (tag/category/author index pages filtered out).
 
     Recurses one level into nested sitemap indexes (<sitemapindex> of <sitemap> entries).
     """
     owns_client = client is None
-    client = client or httpx.AsyncClient(timeout=30.0, follow_redirects=True, headers=_HEADERS)
+    # Some blogs (e.g. Medium-hosted ones) serve a JS app shell instead of raw
+    # XML to clients without a browser-like User-Agent.
+    headers = {"User-Agent": config.user_agent}
+    client = client or httpx.AsyncClient(timeout=30.0, follow_redirects=True, headers=headers)
     try:
         urls = await _fetch_locs(sitemap_url, client)
-        return [u for u in urls if _is_article_url(u)]
+        return [u for u in urls if _is_article_url(u, config.non_article_path_segments)]
     finally:
         if owns_client:
             await client.aclose()

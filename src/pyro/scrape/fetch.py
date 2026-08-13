@@ -8,35 +8,22 @@ import random
 
 from playwright.async_api import async_playwright
 
+from pyro.config import ScrapeConfig
 from pyro.db import Database
 from pyro.urlkey import normalize_url
 
 logger = logging.getLogger(__name__)
 
-# A realistic desktop UA + a settle wait (instead of "networkidle", which never
-# fires on pages with long-lived analytics/websocket connections, and which
-# some hosts' bot-detection uses as a signal) avoids anti-bot challenge pages
-# on Medium-hosted blogs.
-_USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
-)
-_SETTLE_MS = 3000
-
-# Bursty concurrent requests trip Cloudflare's bot challenge even with a
-# realistic UA. These markers identify a challenge page so it can be retried
-# instead of silently stored as if it were real article content.
-_CHALLENGE_MARKERS = ("Attention Required! | Cloudflare", "Just a moment...", "cf-chl")
-_MAX_ATTEMPTS = 3
-_RETRY_BACKOFF_S = 8
+_DEFAULT_SCRAPE_CONFIG = ScrapeConfig()
 
 
 async def scrape_urls(
     urls: list[str],
     db: Database,
     company_name: str,
-    concurrency: int = 5,
+    concurrency: int | None = None,
     limit: int | None = None,
+    config: ScrapeConfig = _DEFAULT_SCRAPE_CONFIG,
 ) -> int:
     """Render each URL with Playwright and store raw HTML in SQLite.
 
@@ -50,16 +37,16 @@ async def scrape_urls(
     if not pending:
         return 0
 
-    sem = asyncio.Semaphore(concurrency)
+    sem = asyncio.Semaphore(concurrency if concurrency is not None else config.concurrency)
     scraped_count = 0
     lock = asyncio.Lock()
 
     async with async_playwright() as pw:
         browser = await pw.chromium.launch(args=["--disable-blink-features=AutomationControlled"])
         context = await browser.new_context(
-            user_agent=_USER_AGENT,
-            viewport={"width": 1280, "height": 900},
-            locale="en-US",
+            user_agent=config.user_agent,
+            viewport={"width": config.viewport_width, "height": config.viewport_height},
+            locale=config.locale,
         )
 
         async def _fetch_one(url: str) -> None:
@@ -70,11 +57,11 @@ async def scrape_urls(
                 await asyncio.sleep(random.uniform(0, 1.5))
 
                 title, html = None, None
-                for attempt in range(1, _MAX_ATTEMPTS + 1):
+                for attempt in range(1, config.max_attempts + 1):
                     page = await context.new_page()
                     try:
                         await page.goto(url, wait_until="domcontentloaded", timeout=60_000)
-                        await page.wait_for_timeout(_SETTLE_MS)
+                        await page.wait_for_timeout(config.settle_ms)
                         title = await page.title()
                         html = await page.content()
                     except Exception:
@@ -83,15 +70,15 @@ async def scrape_urls(
                     finally:
                         await page.close()
 
-                    if html is not None and not any(marker in html for marker in _CHALLENGE_MARKERS):
+                    if html is not None and not any(marker in html for marker in config.challenge_markers):
                         break
                     logger.warning("challenge/blocked page for %s (attempt %d)", url, attempt)
                     title, html = None, None
-                    if attempt < _MAX_ATTEMPTS:
-                        await asyncio.sleep(_RETRY_BACKOFF_S * attempt)
+                    if attempt < config.max_attempts:
+                        await asyncio.sleep(config.retry_backoff_s * attempt)
 
                 if html is None:
-                    logger.error("giving up on %s after %d attempts", url, _MAX_ATTEMPTS)
+                    logger.error("giving up on %s after %d attempts", url, config.max_attempts)
                     return
 
             article_id = normalize_url(url)
