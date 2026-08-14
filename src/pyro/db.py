@@ -1,30 +1,28 @@
-"""SQLite storage for the articles pipeline state (plan.md 'SQLite Schema')."""
+"""ArangoDB storage for pipeline state (raw/cleaned/extracted articles) and for the
+synthesized/routed markdown documents that used to live under output/.
+
+Two collections in a single ArangoDB database, both scoped by `company_name` so one
+database serves every company:
+  - articles_collection: one document per scraped article (pipeline state).
+  - docs_collection: one document per synthesized architecture doc (structured mode:
+    one per domain; freeform mode: one per AI-routed topic), replacing output/*.md.
+"""
 
 from __future__ import annotations
 
-import json
-import sqlite3
+import logging
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from pathlib import Path
-from typing import Any, Self
+from typing import TYPE_CHECKING, Any, Self
 
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS articles (
-    id TEXT PRIMARY KEY,
-    source_url TEXT NOT NULL,
-    title TEXT,
-    company_name TEXT NOT NULL,
-    raw_html TEXT,
-    cleaned_text TEXT,
-    is_architectural INTEGER,
-    extracted_facts TEXT,
-    scraped_at TEXT,
-    extracted_at TEXT
-);
-"""
+from arango import ArangoClient
+
+if TYPE_CHECKING:
+    from pyro.config import Settings
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -41,20 +39,18 @@ class Article:
     extracted_at: str | None = None
 
     @classmethod
-    def from_row(cls, row: sqlite3.Row) -> Article:
-        facts = json.loads(row["extracted_facts"]) if row["extracted_facts"] else None
-        is_arch = row["is_architectural"]
+    def from_doc(cls, doc: dict) -> Article:
         return cls(
-            id=row["id"],
-            source_url=row["source_url"],
-            title=row["title"],
-            company_name=row["company_name"],
-            raw_html=row["raw_html"],
-            cleaned_text=row["cleaned_text"],
-            is_architectural=None if is_arch is None else bool(is_arch),
-            extracted_facts=facts,
-            scraped_at=row["scraped_at"],
-            extracted_at=row["extracted_at"],
+            id=doc["_key"],
+            source_url=doc["source_url"],
+            title=doc.get("title"),
+            company_name=doc["company_name"],
+            raw_html=doc.get("raw_html"),
+            cleaned_text=doc.get("cleaned_text"),
+            is_architectural=doc.get("is_architectural"),
+            extracted_facts=doc.get("extracted_facts"),
+            scraped_at=doc.get("scraped_at"),
+            extracted_at=doc.get("extracted_at"),
         )
 
 
@@ -63,16 +59,31 @@ def _now() -> str:
 
 
 class Database:
-    def __init__(self, path: str | Path):
-        self.path = Path(path)
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(self.path)
-        self._conn.row_factory = sqlite3.Row
-        self._conn.execute(SCHEMA)
-        self._conn.commit()
+    def __init__(
+        self,
+        host: str = "http://localhost:8529",
+        database: str = "pyro",
+        username: str = "root",
+        password: str = "",
+        articles_collection: str = "articles",
+        docs_collection: str = "docs",
+    ):
+        client = ArangoClient(hosts=host)
+        sys_db = client.db("_system", username=username, password=password)
+        if not sys_db.has_database(database):
+            sys_db.create_database(database)
+        self._db = client.db(database, username=username, password=password)
+
+        if not self._db.has_collection(articles_collection):
+            self._db.create_collection(articles_collection)
+        self._articles = self._db.collection(articles_collection)
+
+        if not self._db.has_collection(docs_collection):
+            self._db.create_collection(docs_collection)
+        self._docs = self._db.collection(docs_collection)
 
     def close(self) -> None:
-        self._conn.close()
+        pass
 
     def __enter__(self) -> Self:
         return self
@@ -80,69 +91,134 @@ class Database:
     def __exit__(self, *exc: object) -> None:
         self.close()
 
+    # --- articles: raw scrape -> clean -> extract pipeline state ---
+
     def upsert_raw(
         self, id: str, source_url: str, title: str | None, company_name: str, raw_html: str
     ) -> None:
         """Insert a newly scraped article. No-ops if the id already exists (dedup)."""
-        self._conn.execute(
-            """
-            INSERT INTO articles (id, source_url, title, company_name, raw_html, scraped_at)
-            VALUES (?, ?, ?, ?, ?, ?)
-            ON CONFLICT(id) DO NOTHING
-            """,
-            (id, source_url, title, company_name, raw_html, _now()),
+        if self._articles.has(id):
+            return
+        self._articles.insert(
+            {
+                "_key": id,
+                "source_url": source_url,
+                "title": title,
+                "company_name": company_name,
+                "raw_html": raw_html,
+                "cleaned_text": None,
+                "is_architectural": None,
+                "extracted_facts": None,
+                "scraped_at": _now(),
+                "extracted_at": None,
+            }
         )
-        self._conn.commit()
 
     def exists(self, id: str) -> bool:
-        row = self._conn.execute("SELECT 1 FROM articles WHERE id = ?", (id,)).fetchone()
-        return row is not None
+        return self._articles.has(id)
 
     def mark_cleaned(self, id: str, cleaned_text: str) -> None:
-        self._conn.execute(
-            "UPDATE articles SET cleaned_text = ? WHERE id = ?", (cleaned_text, id)
-        )
-        self._conn.commit()
+        self._articles.update({"_key": id, "cleaned_text": cleaned_text})
 
     def mark_extracted(
         self, id: str, is_architectural: bool, extracted_facts: dict[str, Any]
     ) -> None:
-        self._conn.execute(
-            """
-            UPDATE articles
-            SET is_architectural = ?, extracted_facts = ?, extracted_at = ?
-            WHERE id = ?
-            """,
-            (int(is_architectural), json.dumps(extracted_facts), _now(), id),
+        self._articles.update(
+            {
+                "_key": id,
+                "is_architectural": is_architectural,
+                "extracted_facts": extracted_facts,
+                "extracted_at": _now(),
+            }
         )
-        self._conn.commit()
 
     def fetch_unprocessed(self, stage: str, limit: int | None = None) -> list[Article]:
         """stage: 'clean' (raw_html set, cleaned_text null) or
         'extract' (cleaned_text set, extracted_at null)."""
         if stage == "clean":
-            query = "SELECT * FROM articles WHERE raw_html IS NOT NULL AND cleaned_text IS NULL"
+            filter_clause = "FILTER doc.raw_html != null AND doc.cleaned_text == null"
         elif stage == "extract":
-            query = "SELECT * FROM articles WHERE cleaned_text IS NOT NULL AND extracted_at IS NULL"
+            filter_clause = "FILTER doc.cleaned_text != null AND doc.extracted_at == null"
         else:
             raise ValueError(f"unknown stage: {stage}")
-        if limit is not None:
-            query += f" LIMIT {int(limit)}"
-        rows = self._conn.execute(query).fetchall()
-        return [Article.from_row(r) for r in rows]
+        limit_clause = f"LIMIT {int(limit)}" if limit is not None else ""
+        query = f"FOR doc IN {self._articles.name} {filter_clause} {limit_clause} RETURN doc"
+        cursor = self._db.aql.execute(query)
+        return [Article.from_doc(d) for d in cursor]
 
     def fetch_architectural(self, company_name: str) -> list[Article]:
-        rows = self._conn.execute(
-            "SELECT * FROM articles WHERE company_name = ? AND is_architectural = 1",
-            (company_name,),
-        ).fetchall()
-        return [Article.from_row(r) for r in rows]
+        query = f"""
+        FOR doc IN {self._articles.name}
+          FILTER doc.company_name == @company_name AND doc.is_architectural == true
+          RETURN doc
+        """
+        cursor = self._db.aql.execute(query, bind_vars={"company_name": company_name})
+        return [Article.from_doc(d) for d in cursor]
+
+    # --- docs: synthesized/routed architecture documents (replaces output/*.md) ---
+
+    def upsert_doc(self, key: str, company_name: str, content: str, heading: str | None = None) -> None:
+        """Create or overwrite a synthesized doc, keyed by its slug (e.g. domain or AI-chosen topic)."""
+        doc = {
+            "_key": key,
+            "company_name": company_name,
+            "heading": heading,
+            "content": content,
+            "updated_at": _now(),
+        }
+        if self._docs.has(key):
+            self._docs.update(doc)
+        else:
+            self._docs.insert(doc)
+
+    def get_doc(self, key: str) -> dict | None:
+        return self._docs.get(key)
+
+    def list_docs(self, company_name: str) -> list[dict]:
+        """All synthesized docs for a company, sorted by key. Used both to display results
+        and, in freeform mode, to build the routing index of existing topics."""
+        query = f"""
+        FOR doc IN {self._docs.name}
+          FILTER doc.company_name == @company_name
+          SORT doc._key
+          RETURN doc
+        """
+        cursor = self._db.aql.execute(query, bind_vars={"company_name": company_name})
+        return list(cursor)
 
 
 @contextmanager
-def open_db(path: str | Path) -> Iterator[Database]:
-    db = Database(path)
+def open_db(
+    host: str = "http://localhost:8529",
+    database: str = "pyro",
+    username: str = "root",
+    password: str = "",
+    articles_collection: str = "articles",
+    docs_collection: str = "docs",
+) -> Iterator[Database]:
+    db = Database(
+        host=host,
+        database=database,
+        username=username,
+        password=password,
+        articles_collection=articles_collection,
+        docs_collection=docs_collection,
+    )
     try:
         yield db
     finally:
         db.close()
+
+
+@contextmanager
+def open_db_from_settings(settings: Settings) -> Iterator[Database]:
+    """Same as open_db, but reads connection params off a pyro.config.Settings instance."""
+    with open_db(
+        host=settings.arango.host,
+        database=settings.arango.database,
+        username=settings.arango_username,
+        password=settings.arango_password or "",
+        articles_collection=settings.arango.articles_collection,
+        docs_collection=settings.arango.docs_collection,
+    ) as db:
+        yield db

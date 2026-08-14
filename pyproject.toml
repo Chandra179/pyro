@@ -17,6 +17,7 @@ dependencies = [
     "trafilatura>=1.12",
     "tiktoken>=0.7",
     "json-repair>=0.30",
+    "python-arango>=8.0",
 ]
 
 [project.scripts]

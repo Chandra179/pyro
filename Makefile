@@ -1,8 +1,15 @@
-.PHONY: install test lint run sample-run
+.PHONY: install test lint run sample-run db-up db-down
 
 install:
 	uv sync
 	uv run playwright install chromium
+
+# ArangoDB (see docker-compose.yml) — required before running scrape/clean/extract/synthesize.
+db-up:
+	docker compose up -d
+
+db-down:
+	docker compose down
 
 test:
 	uv run pytest

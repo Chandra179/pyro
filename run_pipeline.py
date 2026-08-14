@@ -11,16 +11,12 @@ src/pyro/config.py:Settings, e.g. {"extraction_concurrency": 2} or
 {"scrape": {"concurrency": 3}}.
 """
 
-from pathlib import Path
-
-from pyro.cli import run_all
+from pyro.cli import _run_all_impl
 from pyro.config import Settings
 
 # --- Edit these to point at a different company/blog ---
 COMPANY_NAME = "Netflix"
 SITEMAP_URL = "https://netflixtechblog.com/sitemap/sitemap.xml"
-DB_PATH = Path("data/netflix.db")
-OUT_DIR = Path("output")
 LIMIT = 20  # cap on newly-scraped articles per run; None for the full blog
 CONCURRENCY = None  # None -> config/config.yaml's scrape.concurrency
 
@@ -31,11 +27,9 @@ OVERRIDES: dict = {
 }
 
 if __name__ == "__main__":
-    run_all(
+    _run_all_impl(
         company_name=COMPANY_NAME,
         sitemap_url=SITEMAP_URL,
-        db=DB_PATH,
-        out_dir=OUT_DIR,
         concurrency=CONCURRENCY,
         limit=LIMIT,
         settings=Settings(**OVERRIDES) if OVERRIDES else None,

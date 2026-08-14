@@ -146,6 +146,21 @@ async def _synthesize_domain(
     )
 
 
+def build_docs_index(db: Database, company_name: str) -> str:
+    """One line per existing synthesized doc: key + heading, as routing context for the AI."""
+    docs = db.list_docs(company_name)
+    if not docs:
+        return "(none yet — this will be the first file)"
+    return "\n".join(f"- {d['_key']}.md: {d.get('heading') or d['_key']}" for d in docs)
+
+
+def _first_heading(content: str) -> str:
+    return next(
+        (line.lstrip("#").strip() for line in content.splitlines() if line.startswith("#")),
+        "",
+    )
+
+
 def _parse_routed_response(raw: str) -> tuple[str, str]:
     """Parse the "FILENAME: x.md\n---\n<doc>" format the freeform_route prompt returns."""
     lines = raw.strip().splitlines()
@@ -194,7 +209,8 @@ async def route_and_update_doc(
 
 
 async def run_synthesis(db: Database, settings: Settings, company_name: str) -> dict[str, str]:
-    """Produce one architecture doc per domain for company_name, keyed by domain name."""
+    """Produce one architecture doc per domain for company_name, persist each as a doc in
+    ArangoDB (key "architecture-<domain-slug>"), and return them keyed by domain name."""
     articles = db.fetch_architectural(company_name)
     if not articles:
         raise RuntimeError(f"no architectural articles found for {company_name!r}")
@@ -206,7 +222,9 @@ async def run_synthesis(db: Database, settings: Settings, company_name: str) -> 
 
     results: dict[str, str] = {}
     for domain, domain_articles in groups.items():
-        results[domain] = await _synthesize_domain(
+        content = await _synthesize_domain(
             domain, domain_articles, company_name, settings, model_params
         )
+        results[domain] = content
+        db.upsert_doc(f"architecture-{slugify(domain)}", company_name, content, heading=_first_heading(content))
     return results

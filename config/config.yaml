@@ -3,6 +3,14 @@
 # Any value here can still be overridden per-environment via an env var of the
 # same (upper-cased, flat fields only) name, e.g. EXTRACTION_CONCURRENCY=10.
 
+# ArangoDB connection shape (see docker-compose.yml). Credentials
+# (ARANGO_USERNAME/ARANGO_PASSWORD) stay in .env, not here.
+arango:
+  host: "http://localhost:8529"
+  database: "pyro"
+  articles_collection: "articles"
+  docs_collection: "docs"
+
 # Extraction (Pass 1) concurrency, bounded to the active tier's RPM limit.
 extraction_rpm_limit: 20
 extraction_concurrency: 5

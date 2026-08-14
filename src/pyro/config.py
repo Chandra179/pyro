@@ -87,6 +87,13 @@ class PromptsConfig(BaseModel):
     synthesis_freeform_route_user: str = "synthesis/freeform_route_user.md"
 
 
+class ArangoConfig(BaseModel):
+    host: str = "http://localhost:8529"
+    database: str = "pyro"
+    articles_collection: str = "articles"
+    docs_collection: str = "docs"
+
+
 class CleanConfig(BaseModel):
     boilerplate_tags: list[str] = ["nav", "header", "footer", "aside", "script", "style", "noscript", "form"]
     boilerplate_selectors: list[str] = [
@@ -110,6 +117,11 @@ class Settings(BaseSettings):
     groq_api_key: str | None = None
     openai_api_key: str | None = None
     tokenrouter_api_key: str | None = None
+
+    # ArangoDB connection credentials — non-secret connection shape (host,
+    # database/collection names) lives in ArangoConfig below.
+    arango_username: str = "root"
+    arango_password: str | None = None
 
     # Extraction (Pass 1) concurrency, bounded to the active tier's RPM limit.
     extraction_rpm_limit: int = 20
@@ -153,6 +165,7 @@ class Settings(BaseSettings):
     sitemap: SitemapConfig = SitemapConfig()
     clean: CleanConfig = CleanConfig()
     prompts: PromptsConfig = PromptsConfig()
+    arango: ArangoConfig = ArangoConfig()
 
     @classmethod
     def settings_customise_sources(
