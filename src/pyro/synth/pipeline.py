@@ -12,10 +12,12 @@ from pyro.config import Settings
 from pyro.db import Article, Database
 from pyro.router import synthesis_model_params
 from pyro.synth.prompts import (
-    BATCH_SYNTHESIS_SYSTEM_PROMPT,
-    BATCH_SYNTHESIS_USER_PROMPT,
-    SYNTHESIS_SYSTEM_PROMPT,
-    SYNTHESIS_USER_PROMPT,
+    batch_synthesis_system_prompt,
+    batch_synthesis_user_prompt,
+    freeform_route_system_prompt,
+    freeform_route_user_prompt,
+    synthesis_system_prompt,
+    synthesis_user_prompt,
 )
 
 logger = logging.getLogger(__name__)
@@ -60,15 +62,19 @@ def _group_by_domain(articles: list[Article]) -> dict[str, list[Article]]:
 
 
 async def _summarize_batch(
-    articles: list[Article], company_name: str, model_params: dict
+    articles: list[Article],
+    company_name: str,
+    model_params: dict,
+    system_prompt: str,
+    user_template: str,
 ) -> list[dict]:
     facts_json = json.dumps([_article_summary(a) for a in articles], indent=2)
     response = await acompletion(
         messages=[
-            {"role": "system", "content": BATCH_SYNTHESIS_SYSTEM_PROMPT},
+            {"role": "system", "content": system_prompt},
             {
                 "role": "user",
-                "content": BATCH_SYNTHESIS_USER_PROMPT.format(
+                "content": user_template.format(
                     article_count=len(articles),
                     company_name=company_name,
                     facts_json_data=facts_json,
@@ -88,14 +94,16 @@ async def _final_synthesis(
     total_articles: int,
     model_params: dict,
     max_tokens: int,
+    system_prompt: str,
+    user_template: str,
 ) -> str:
     facts_json = json.dumps(facts_data, indent=2)
     response = await acompletion(
         messages=[
-            {"role": "system", "content": SYNTHESIS_SYSTEM_PROMPT},
+            {"role": "system", "content": system_prompt},
             {
                 "role": "user",
-                "content": SYNTHESIS_USER_PROMPT.format(
+                "content": user_template.format(
                     total_articles=total_articles,
                     company_name=company_name,
                     domain=domain,
@@ -116,13 +124,73 @@ async def _synthesize_domain(
     if len(batches) == 1:
         facts_data = [_article_summary(a) for a in articles]
     else:
+        batch_system_prompt = batch_synthesis_system_prompt(settings)
+        batch_user_template = batch_synthesis_user_prompt(settings)
         facts_data = []
         for batch in batches:
-            facts_data.extend(await _summarize_batch(batch, company_name, model_params))
+            facts_data.extend(
+                await _summarize_batch(
+                    batch, company_name, model_params, batch_system_prompt, batch_user_template
+                )
+            )
 
     return await _final_synthesis(
-        facts_data, company_name, domain, len(articles), model_params, settings.synthesis_max_tokens
+        facts_data,
+        company_name,
+        domain,
+        len(articles),
+        model_params,
+        settings.synthesis_max_tokens,
+        synthesis_system_prompt(settings),
+        synthesis_user_prompt(settings),
     )
+
+
+def _parse_routed_response(raw: str) -> tuple[str, str]:
+    """Parse the "FILENAME: x.md\n---\n<doc>" format the freeform_route prompt returns."""
+    lines = raw.strip().splitlines()
+    if not lines or not lines[0].strip().upper().startswith("FILENAME:"):
+        raise ValueError(f"routed response missing FILENAME header: {raw[:200]!r}")
+    filename = lines[0].split(":", 1)[1].strip()
+    try:
+        sep_idx = next(i for i, line in enumerate(lines[1:], start=1) if line.strip() == "---")
+    except StopIteration:
+        raise ValueError(f"routed response missing '---' separator: {raw[:200]!r}") from None
+    content = "\n".join(lines[sep_idx + 1 :]).strip()
+    if not content:
+        raise ValueError("routed response had an empty document body")
+    return filename, content
+
+
+async def route_and_update_doc(
+    existing_files_index: str,
+    title: str,
+    extraction_text: str,
+    company_name: str,
+    settings: Settings,
+    model_params: dict,
+) -> tuple[str, str]:
+    """Freeform mode: decide which topic file this article belongs to (or that it needs a new
+    one), and fold it in. Returns (filename, full updated document)."""
+    response = await acompletion(
+        messages=[
+            {"role": "system", "content": freeform_route_system_prompt(settings)},
+            {
+                "role": "user",
+                "content": freeform_route_user_prompt(settings).format(
+                    company_name=company_name,
+                    existing_files_index=existing_files_index,
+                    title=title,
+                    extraction_text=extraction_text,
+                ),
+            },
+        ],
+        max_tokens=settings.synthesis_max_tokens,
+        **model_params,
+    )
+    filename, content = _parse_routed_response(response.choices[0].message.content)
+    stem = slugify(filename.removesuffix(".md").removesuffix(".markdown"))
+    return f"{stem}.md", _strip_outer_markdown_fence(content)
 
 
 async def run_synthesis(db: Database, settings: Settings, company_name: str) -> dict[str, str]:
@@ -130,6 +198,8 @@ async def run_synthesis(db: Database, settings: Settings, company_name: str) -> 
     articles = db.fetch_architectural(company_name)
     if not articles:
         raise RuntimeError(f"no architectural articles found for {company_name!r}")
+    if settings.synthesis_article_limit is not None:
+        articles = articles[: settings.synthesis_article_limit]
 
     model_params = synthesis_model_params(settings)
     groups = _group_by_domain(articles)

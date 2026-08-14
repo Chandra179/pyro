@@ -14,14 +14,37 @@ chunk_overlap_tokens: 500
 # Code block collapsing during cleaning.
 code_block_line_threshold: 15
 
+# "structured" (default): schema-validated extraction + grouped batch
+# synthesis per domain. "freeform": plain-text extraction, no domain
+# grouping — each article is routed into an existing or new topic file.
+pipeline_mode: "structured"
+
 # Synthesis batching + model.
-synthesis_batch_size: 50
+synthesis_batch_size: 2
+# Temporary cap on total articles fed into synthesis, for cheap test runs.
+# Remove/raise once the prompts are stable.
+synthesis_article_limit: 2
 # Largest verified-free OpenRouter model (see router.py) — swap for a paid
 # model via config once you have OPENAI_API_KEY or similar set.
 synthesis_model: "openrouter/nvidia/nemotron-3-super-120b-a12b:free"
 # Narrative deep-dive synthesis output is far longer than a fixed per-entity
 # catalog format — give the final pass room to not get cut off.
 synthesis_max_tokens: 16000
+
+# Prompt template paths, relative to the top-level prompts/ dir. Point any
+# field at a different file to swap that prompt — picked up at runtime, no
+# restart needed.
+prompts:
+  extraction_system: "extraction/system.md"
+  extraction_user: "extraction/user.md"
+  synthesis_system: "synthesis/system.md"
+  synthesis_user: "synthesis/user.md"
+  synthesis_batch_system: "synthesis/batch_system.md"
+  synthesis_batch_user: "synthesis/batch_user.md"
+  extraction_freeform_system: "extraction/freeform_system.md"
+  extraction_freeform_user: "extraction/freeform_user.md"
+  synthesis_freeform_route_system: "synthesis/freeform_route_system.md"
+  synthesis_freeform_route_user: "synthesis/freeform_route_user.md"
 
 # Fixed domain taxonomy so classification stays consistent across articles
 # instead of the LLM inventing free-form labels per call. "Other" is the

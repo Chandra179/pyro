@@ -28,7 +28,7 @@ VALID_JSON = json.dumps(
 @pytest.mark.asyncio
 async def test_first_model_success_no_fallback():
     with patch("pyro.extract.pipeline.acompletion", new=AsyncMock(return_value=_fake_response(VALID_JSON))) as mock_call:
-        facts = await extract_chunk("t", "u", "c", [{"model": "model-a"}, {"model": "model-b"}])
+        facts = await extract_chunk("t", "u", "c", [{"model": "model-a"}, {"model": "model-b"}], "sys", "user {title}")
     assert facts.is_architectural is True
     assert facts.topic == "Zuul API Gateway routes edge traffic."
     assert mock_call.call_count == 1
@@ -39,7 +39,7 @@ async def test_falls_back_on_malformed_json():
     responses = [_fake_response("not json at all"), _fake_response(VALID_JSON)]
     mock_call = AsyncMock(side_effect=responses)
     with patch("pyro.extract.pipeline.acompletion", new=mock_call):
-        facts = await extract_chunk("t", "u", "c", [{"model": "model-a"}, {"model": "model-b"}])
+        facts = await extract_chunk("t", "u", "c", [{"model": "model-a"}, {"model": "model-b"}], "sys", "user {title}")
     assert facts.is_architectural is True
     assert mock_call.call_count == 2
 
@@ -50,7 +50,7 @@ async def test_falls_back_on_schema_invalid_json():
     responses = [_fake_response(bad), _fake_response(VALID_JSON)]
     mock_call = AsyncMock(side_effect=responses)
     with patch("pyro.extract.pipeline.acompletion", new=mock_call):
-        facts = await extract_chunk("t", "u", "c", [{"model": "model-a"}, {"model": "model-b"}])
+        facts = await extract_chunk("t", "u", "c", [{"model": "model-a"}, {"model": "model-b"}], "sys", "user {title}")
     assert facts.is_architectural is True
     assert mock_call.call_count == 2
 
@@ -59,7 +59,7 @@ async def test_falls_back_on_schema_invalid_json():
 async def test_repairs_markdown_fenced_json():
     fenced = f"```json\n{VALID_JSON}\n```"
     with patch("pyro.extract.pipeline.acompletion", new=AsyncMock(return_value=_fake_response(fenced))):
-        facts = await extract_chunk("t", "u", "c", [{"model": "model-a"}])
+        facts = await extract_chunk("t", "u", "c", [{"model": "model-a"}], "sys", "user {title}")
     assert facts.is_architectural is True
 
 
@@ -68,7 +68,7 @@ async def test_all_models_fail_raises():
     mock_call = AsyncMock(side_effect=RuntimeError("503 outage"))
     with patch("pyro.extract.pipeline.acompletion", new=mock_call):
         with pytest.raises(RuntimeError, match="all models in cascade failed"):
-            await extract_chunk("t", "u", "c", [{"model": "model-a"}, {"model": "model-b"}])
+            await extract_chunk("t", "u", "c", [{"model": "model-a"}, {"model": "model-b"}], "sys", "user {title}")
     assert mock_call.call_count == 2
 
 

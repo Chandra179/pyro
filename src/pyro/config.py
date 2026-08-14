@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Literal
 
 from pydantic import BaseModel
 from pydantic_settings import (
@@ -64,6 +65,28 @@ class SitemapConfig(BaseModel):
     ]
 
 
+class PromptsConfig(BaseModel):
+    """Paths (relative to the top-level prompts/ dir) for each stage's templates.
+
+    Swap in an alternate prompt by pointing a field at a different file — no
+    code change needed, and picked up at runtime (see pyro.prompts.load_prompt).
+    """
+
+    extraction_system: str = "extraction/system.md"
+    extraction_user: str = "extraction/user.md"
+    synthesis_system: str = "synthesis/system.md"
+    synthesis_user: str = "synthesis/user.md"
+    synthesis_batch_system: str = "synthesis/batch_system.md"
+    synthesis_batch_user: str = "synthesis/batch_user.md"
+
+    # "freeform" mode: no schema, no domain grouping (see pipeline_mode below).
+    extraction_freeform_system: str = "extraction/freeform_system.md"
+    extraction_freeform_user: str = "extraction/freeform_user.md"
+    # Routes each article to an existing topic file (update) or a new one (create).
+    synthesis_freeform_route_system: str = "synthesis/freeform_route_system.md"
+    synthesis_freeform_route_user: str = "synthesis/freeform_route_user.md"
+
+
 class CleanConfig(BaseModel):
     boilerplate_tags: list[str] = ["nav", "header", "footer", "aside", "script", "style", "noscript", "form"]
     boilerplate_selectors: list[str] = [
@@ -99,10 +122,18 @@ class Settings(BaseSettings):
     # Code block collapsing.
     code_block_line_threshold: int = 15
 
+    # "structured": schema-validated extraction, grouped batch synthesis per
+    # domain (default). "freeform": no schema/domain grouping — extraction is
+    # plain text, and each article is immediately routed into an existing or
+    # new topic file instead of a separate batch synthesis pass.
+    pipeline_mode: Literal["structured", "freeform"] = "structured"
+
     # Synthesis batching.
     synthesis_batch_size: int = 50
     synthesis_model: str = "openrouter/nvidia/nemotron-3-super-120b-a12b:free"
     synthesis_max_tokens: int = 16000
+    # Temporary cap on total articles fed into synthesis, for cheap test runs.
+    synthesis_article_limit: int | None = None
 
     # Fixed domain taxonomy for extraction classification.
     domains: list[str] = [
@@ -121,6 +152,7 @@ class Settings(BaseSettings):
     scrape: ScrapeConfig = ScrapeConfig()
     sitemap: SitemapConfig = SitemapConfig()
     clean: CleanConfig = CleanConfig()
+    prompts: PromptsConfig = PromptsConfig()
 
     @classmethod
     def settings_customise_sources(

@@ -11,6 +11,7 @@ from pyro.clean.clean import clean_html
 from pyro.config import Settings
 from pyro.db import open_db
 from pyro.extract.pipeline import run_extraction
+from pyro.freeform.pipeline import run_freeform_extraction
 from pyro.scrape.fetch import scrape_urls
 from pyro.scrape.sitemap import fetch_sitemap_urls
 from pyro.synth.pipeline import run_synthesis, slugify
@@ -64,13 +65,27 @@ def clean(
 @app.command()
 def extract(
     db: Path = typer.Option(...),
+    company_name: str | None = typer.Option(None, help="Required when config pipeline_mode is 'freeform'"),
+    out_dir: Path = typer.Option(Path("output"), help="freeform mode only: where topic .md files are written"),
     limit: int | None = typer.Option(None),
     settings: Settings | None = None,
 ) -> None:
-    """Run LLM extraction on all cleaned, unextracted articles."""
+    """Run LLM extraction on all cleaned, unextracted articles.
+
+    In freeform pipeline_mode, each article is immediately routed into a topic file under
+    out_dir/ (updating an existing one or creating a new one) as it's extracted, instead of a
+    separate synthesize step.
+    """
     settings = settings or Settings()
     with open_db(db) as database:
-        count = asyncio.run(run_extraction(database, settings, limit=limit))
+        if settings.pipeline_mode == "freeform":
+            if not company_name:
+                raise typer.BadParameter("--company-name is required when pipeline_mode is 'freeform'")
+            count = asyncio.run(
+                run_freeform_extraction(database, settings, company_name, out_dir, limit=limit)
+            )
+        else:
+            count = asyncio.run(run_extraction(database, settings, limit=limit))
     typer.echo(f"extracted {count} articles")
 
 
@@ -83,6 +98,9 @@ def synthesize(
 ) -> None:
     """Synthesize one architecture doc per domain for company_name into out_dir/."""
     settings = settings or Settings()
+    if settings.pipeline_mode == "freeform":
+        typer.echo("pipeline_mode is 'freeform' — topic files are updated during 'extract'; nothing to do.")
+        return
     with open_db(db) as database:
         docs = asyncio.run(run_synthesis(database, settings, company_name))
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -112,7 +130,7 @@ def run_all(
         settings=settings,
     )
     clean(db=db, settings=settings)
-    extract(db=db, settings=settings)
+    extract(db=db, company_name=company_name, out_dir=out_dir, settings=settings)
     synthesize(db=db, company_name=company_name, out_dir=out_dir, settings=settings)
 
 
