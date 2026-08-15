@@ -25,3 +25,9 @@ def get_synthesis(company_name: str) -> list[dict]:
     settings = Settings()
     with open_db_from_settings(settings) as db:
         return db.list_docs(company_name)
+
+
+def get_doc(company_name: str, doc_key: str) -> dict | None:
+    settings = Settings()
+    with open_db_from_settings(settings) as db:
+        return db.get_doc_for_company(company_name, doc_key)

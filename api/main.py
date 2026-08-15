@@ -14,8 +14,9 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from api.data import get_extraction, get_synthesis, list_companies
+from api.data import get_doc, get_extraction, get_synthesis, list_companies
 from api.jobs import JOBS, list_jobs, submit_job
+from api.render import render_markdown
 
 load_dotenv()
 
@@ -94,4 +95,16 @@ def data_page(request: Request, company: str | None = None, view: str = "extract
 def data_panel(request: Request, company: str | None = None, view: str = "extraction") -> HTMLResponse:
     return templates.TemplateResponse(
         request, "partials/data_panel.html", _data_context(company, view)
+    )
+
+
+@app.get("/data/doc/{doc_key}", response_class=HTMLResponse)
+def doc_preview(request: Request, doc_key: str, company: str) -> HTMLResponse:
+    doc = get_doc(company, doc_key)
+    if doc is None:
+        raise HTTPException(status_code=404, detail="doc not found")
+    return templates.TemplateResponse(
+        request,
+        "partials/doc_modal.html",
+        {"doc": doc, "content_html": render_markdown(doc["content"])},
     )

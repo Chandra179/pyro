@@ -1,6 +1,31 @@
 @import "tailwindcss";
+@plugin "@tailwindcss/typography";
 
 /* Matches the old `tailwind.config = { darkMode: "class" }` behavior:
    dark: variants activate when an ancestor has class="dark", set by the
    inline theme script in base.html (not by prefers-color-scheme alone). */
 @custom-variant dark (&:where(.dark, .dark *));
+
+/* Synthesis docs (see api/render.py) render via the `prose` typography
+   plugin classes directly in dashboard/templates/partials/doc_modal.html —
+   its default max-width: 65ch is exactly the "book" reading-column width
+   the doc modal is designed around, so no override needed here. Mermaid
+   diagrams opt out of prose's text styling (not-prose, applied in the fence
+   formatter) since an SVG diagram isn't prose. */
+.prose :where(pre.mermaid) {
+  display: flex;
+  justify-content: center;
+  overflow-x: auto;
+  background: none;
+  padding: 0;
+}
+
+/* Toggled by the resize button in partials/doc_modal.html (see
+   toggleDocModalSize() in base.html). Plain CSS rather than a Tailwind
+   sm:max-w-* utility because the size is a runtime user choice, not
+   something Tailwind's build-time template scan can see — an ID selector
+   here straightforwardly outranks the dialog's own sm:max-w-3xl class. */
+#doc-modal.doc-modal--expanded {
+  max-width: 72rem; /* ~1152px */
+  max-height: 92vh;
+}
