@@ -1,0 +1,20 @@
+{#
+  Shared badge styling. `variant` picks the color scheme; callers own the
+  label text and the mapping from their own status/stage values to a variant.
+#}
+{% set badge_variants = {
+  "neutral": "bg-slate-200 text-slate-600 dark:bg-slate-700 dark:text-slate-200",
+  "neutral-muted": "bg-slate-200 text-slate-500 dark:bg-slate-700 dark:text-slate-400",
+  "amber": "bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300",
+  "emerald": "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300",
+  "rose": "bg-rose-100 text-rose-700 dark:bg-rose-500/20 dark:text-rose-300",
+} %}
+
+{% macro badge(label, variant, pulse=false) %}
+<span class="rounded-full px-2.5 py-1 text-xs font-medium {{ badge_variants[variant] }}">
+  {% if pulse %}
+  <span class="mr-1 inline-block h-2 w-2 animate-pulse rounded-full bg-current align-middle"></span>
+  {% endif %}
+  {{ label }}
+</span>
+{% endmacro %}

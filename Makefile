@@ -1,4 +1,4 @@
-.PHONY: install test lint run sample-run db-up db-down dashboard
+.PHONY: install test lint run sample-run db-up db-down dashboard dashboard-css dashboard-css-watch
 
 install:
 	uv sync
@@ -29,5 +29,15 @@ sample-run: run
 
 # htmx + Jinja2 + Tailwind dashboard for submitting sitemap URLs and watching
 # scrape -> clean -> extract -> synthesize run. Requires db-up + OPENROUTER_API_KEY.
+# CSS/JS are pre-built and committed under dashboard/static/ — you only need
+# `dashboard-css` after editing a template's classes or dashboard/static/src/input.css.
 dashboard:
 	uv run uvicorn api.main:app --reload
+
+# Rebuild dashboard/static/css/app.css from the current templates (first run: `npm install` in dashboard/).
+dashboard-css:
+	cd dashboard && npm run build:css
+
+# Rebuild on every template/CSS change while you work on the dashboard UI.
+dashboard-css-watch:
+	cd dashboard && npm run watch:css

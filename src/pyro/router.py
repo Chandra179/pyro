@@ -12,16 +12,22 @@ cascade degrades gracefully down to whatever provider(s) are available. Order:
      a free model. Self-updating safety net against future catalog rotation.
   5. Groq Cloud free tier (llama-3.3-70b-versatile) — very fast, tight TPM limits.
   6. Direct Google AI Studio (Gemini) — bigger context window, 15 RPM / 1000 RPD.
-  7. TokenRouter free aliases (api.tokenrouter.com) — rotating "-free" model
+  7. OpenCode Zen free aliases (opencode.ai/zen) — rotating "-free" promo
+     model IDs (e.g. big-pickle, deepseek-v4-flash-free), same OpenAI-
+     compatible passthrough shape as the TokenRouter tiers below, gated on
+     opencode_api_key. No subscription required for these — OpenCode Zen is
+     pay-as-you-go for its paid models, separate from the $10/mo "OpenCode Go"
+     product, which this integration does not use.
+  8. TokenRouter free aliases (api.tokenrouter.com) — rotating "-free" model
      IDs (e.g. qwen/qwen3.8-max-free) that TokenRouter itself promos as $0,
      capacity-constrained and not guaranteed to stay free. Same OpenAI-compatible
-     passthrough as tier 8, gated on the same tokenrouter_api_key.
-  8. TokenRouter paid (api.tokenrouter.com) — OpenAI-compatible multi-provider
+     passthrough as tier 9, gated on the same tokenrouter_api_key.
+  9. TokenRouter paid (api.tokenrouter.com) — OpenAI-compatible multi-provider
      proxy, added via litellm's generic `openai/` + `api_base` passthrough
      rather than a bespoke client (litellm already abstracts "any OpenAI-shaped
      endpoint" — this is that abstraction point, not a new one). Sits after the
      free tiers, before the direct-OpenAI last resort.
-  9. Paid fallback (OpenAI gpt-4o-mini) — last resort, no free-tier limits.
+  10. Paid fallback (OpenAI gpt-4o-mini) — last resort, no free-tier limits.
 """
 
 from __future__ import annotations
@@ -68,6 +74,19 @@ def build_model_list(settings: Settings) -> list[dict]:
                 },
             }
         )
+
+    if settings.opencode_api_key:
+        for model_name in settings.router.opencode_free_models:
+            model_list.append(
+                {
+                    "model_name": "extraction-cascade",
+                    "litellm_params": {
+                        "model": f"openai/{model_name}",
+                        "api_base": settings.router.opencode_api_base,
+                        "api_key": settings.opencode_api_key,
+                    },
+                }
+            )
 
     if settings.tokenrouter_api_key:
         for model_name in settings.router.tokenrouter_free_models:

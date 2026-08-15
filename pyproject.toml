@@ -44,6 +44,7 @@ packages = ["src/pyro"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+pythonpath = ["."]
 
 [tool.ruff.lint]
 # B008: typer's `= typer.Option(...)` default pattern is idiomatic, not a bug.

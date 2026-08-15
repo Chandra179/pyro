@@ -155,6 +155,31 @@ class Database:
         cursor = self._db.aql.execute(query, bind_vars={"company_name": company_name})
         return [Article.from_doc(d) for d in cursor]
 
+    def list_articles(self, company_name: str) -> list[Article]:
+        """All articles for a company regardless of pipeline stage, newest scrape first.
+        Used by the dashboard's live extraction view."""
+        query = f"""
+        FOR doc IN {self._articles.name}
+          FILTER doc.company_name == @company_name
+          SORT doc.scraped_at DESC
+          RETURN doc
+        """
+        cursor = self._db.aql.execute(query, bind_vars={"company_name": company_name})
+        return [Article.from_doc(d) for d in cursor]
+
+    def list_company_names(self) -> list[str]:
+        """Distinct company names seen across both collections, for the dashboard's
+        company picker."""
+        query = f"""
+        FOR name IN UNION_DISTINCT(
+          (FOR doc IN {self._articles.name} RETURN doc.company_name),
+          (FOR doc IN {self._docs.name} RETURN doc.company_name)
+        )
+        SORT name
+        RETURN name
+        """
+        return list(self._db.aql.execute(query))
+
     # --- docs: synthesized/routed architecture documents (replaces output/*.md) ---
 
     def upsert_doc(self, key: str, company_name: str, content: str, heading: str | None = None) -> None:

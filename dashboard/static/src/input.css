@@ -1,0 +1,6 @@
+@import "tailwindcss";
+
+/* Matches the old `tailwind.config = { darkMode: "class" }` behavior:
+   dark: variants activate when an ancestor has class="dark", set by the
+   inline theme script in base.html (not by prefers-color-scheme alone). */
+@custom-variant dark (&:where(.dark, .dark *));

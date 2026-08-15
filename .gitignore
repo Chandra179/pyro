@@ -219,3 +219,7 @@ __marimo__/
 
 # pyro pipeline local state
 data/netflix.db
+
+# dashboard Tailwind build tooling (built output in dashboard/static/css is committed;
+# package-lock.json is kept for reproducible rebuilds)
+dashboard/node_modules/

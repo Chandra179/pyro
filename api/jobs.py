@@ -94,7 +94,7 @@ def _run_job(job: Job) -> None:
         job.status = "synthesizing"
         _synthesize_impl(job.company_name, settings=settings)
         job.status = "done"
-    except Exception as exc:  # noqa: BLE001 - surfaced to the dashboard, not raised
+    except Exception as exc:
         job.status = "error"
         job.error = str(exc)
 

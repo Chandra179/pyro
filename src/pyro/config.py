@@ -35,6 +35,14 @@ class RouterConfig(BaseModel):
     tokenrouter_free_models: list[str] = [
         "qwen/qwen3.8-max-free",
     ]
+    # OpenCode Zen (opencode.ai) — another OpenAI-compatible passthrough, same
+    # shape as the TokenRouter tiers above. Model IDs are OpenCode's own
+    # rotating "-free" promos (no stable free tier guaranteed long-term).
+    opencode_api_base: str = "https://opencode.ai/zen/v1"
+    opencode_free_models: list[str] = [
+        "big-pickle",
+        "deepseek-v4-flash-free",
+    ]
     openrouter_free_models: list[str] = [
         "openrouter/openai/gpt-oss-20b:free",
         "openrouter/nvidia/nemotron-3-super-120b-a12b:free",
@@ -128,6 +136,7 @@ class Settings(BaseSettings):
     groq_api_key: str | None = None
     openai_api_key: str | None = None
     tokenrouter_api_key: str | None = None
+    opencode_api_key: str | None = None
 
     # ArangoDB connection credentials — non-secret connection shape (host,
     # database/collection names) lives in ArangoConfig below.

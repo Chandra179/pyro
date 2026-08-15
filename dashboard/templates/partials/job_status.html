@@ -1,11 +1,12 @@
-{% set status_colors = {
-  "pending": "bg-slate-200 text-slate-600 dark:bg-slate-700 dark:text-slate-200",
-  "scraping": "bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300",
-  "cleaning": "bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300",
-  "extracting": "bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300",
-  "synthesizing": "bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300",
-  "done": "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300",
-  "error": "bg-rose-100 text-rose-700 dark:bg-rose-500/20 dark:text-rose-300",
+{% from "partials/_macros.html" import badge %}
+{% set status_variants = {
+  "pending": "neutral",
+  "scraping": "amber",
+  "cleaning": "amber",
+  "extracting": "amber",
+  "synthesizing": "amber",
+  "done": "emerald",
+  "error": "rose",
 } %}
 <div
   id="job-{{ job.id }}"
@@ -28,12 +29,7 @@
         {% endif %}
       </p>
     </div>
-    <span class="rounded-full px-3 py-1 text-xs font-medium {{ status_colors[job.status] }}">
-      {% if not job.is_finished %}
-      <span class="mr-1 inline-block h-2 w-2 animate-pulse rounded-full bg-current align-middle"></span>
-      {% endif %}
-      {{ job.status_label }}
-    </span>
+    {{ badge(job.status_label, status_variants[job.status], pulse=not job.is_finished) }}
   </div>
   {% if job.scraped_count is not none %}
   <p class="mt-2 text-xs text-slate-500 dark:text-slate-500">
