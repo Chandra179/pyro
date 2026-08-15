@@ -19,11 +19,22 @@ class RouterConfig(BaseModel):
     num_retries: int = 2
     cooldown_time: int = 30
     allowed_fails: int = 1
+    # Per-request cap so a hung/slow model raises a timeout exception instead
+    # of blocking forever — needed for num_retries/cooldown fallback to ever
+    # trigger on a stall (only raised exceptions advance the cascade).
+    timeout: float = 60.0
+    stream_timeout: float = 60.0
     # TokenRouter (api.tokenrouter.com) is an OpenAI-compatible multi-provider
     # proxy — model IDs are its own "<provider>/<model-slug>" aliases, not raw
-    # upstream model names. No confirmed free tier; treated as a paid tier.
+    # upstream model names.
     tokenrouter_model: str = "deepseek/deepseek-v4-flash-0731"
     tokenrouter_api_base: str = "https://api.tokenrouter.com/v1"
+    # TokenRouter's own "-free" aliases — rotating time-boxed/capacity-limited
+    # promos (e.g. Kimi K3 was free for a stretch), not a stable free tier.
+    # Tried before the paid tokenrouter_model tier, same api_base/api_key.
+    tokenrouter_free_models: list[str] = [
+        "qwen/qwen3.8-max-free",
+    ]
     openrouter_free_models: list[str] = [
         "openrouter/openai/gpt-oss-20b:free",
         "openrouter/nvidia/nemotron-3-super-120b-a12b:free",

@@ -1,4 +1,4 @@
-.PHONY: install test lint run sample-run db-up db-down
+.PHONY: install test lint run sample-run db-up db-down dashboard
 
 install:
 	uv sync
@@ -26,3 +26,8 @@ run:
 
 # Alias matching docs/plan.md "Success Criteria Before Scaling Up".
 sample-run: run
+
+# htmx + Jinja2 + Tailwind dashboard for submitting sitemap URLs and watching
+# scrape -> clean -> extract -> synthesize run. Requires db-up + OPENROUTER_API_KEY.
+dashboard:
+	uv run uvicorn api.main:app --reload

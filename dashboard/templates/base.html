@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en" class="h-full">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{% block title %}pyro dashboard{% endblock %}</title>
+    <script>
+      // Applied before Tailwind renders anything, so there's no flash of the wrong theme.
+      (function () {
+        var stored = localStorage.getItem("theme");
+        var prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+        if (stored === "dark" || (!stored && prefersDark)) {
+          document.documentElement.classList.add("dark");
+        }
+      })();
+    </script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = { darkMode: "class" };
+    </script>
+    <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+  </head>
+  <body class="h-full bg-slate-50 text-slate-900 antialiased dark:bg-slate-950 dark:text-slate-100">
+    <div class="flex h-full">
+      <aside
+        class="flex w-60 shrink-0 flex-col border-r border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900"
+      >
+        <div class="flex items-center gap-2 px-5 py-5">
+          <div class="flex h-8 w-8 items-center justify-center rounded-md bg-indigo-500 text-sm font-bold text-white">
+            P
+          </div>
+          <span class="text-lg font-semibold">pyro</span>
+        </div>
+        <nav class="flex-1 space-y-1 px-3">
+          <a
+            href="/"
+            class="flex items-center gap-2 rounded-md bg-indigo-50 px-3 py-2 text-sm font-medium text-indigo-600 dark:bg-indigo-500/10 dark:text-indigo-300"
+          >
+            <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M3 12l2-2m0 0l7-7 7 7m-9 2v9m0 0h4m-4 0H5m14-9l2 2m-2-2v9a1 1 0 01-1 1h-3m0-9v9m0-9h-3" />
+            </svg>
+            Runs
+          </a>
+          {% for label in ["Docs", "Companies", "Settings"] %}
+          <span
+            class="flex cursor-not-allowed items-center gap-2 rounded-md px-3 py-2 text-sm text-slate-400 dark:text-slate-600"
+          >
+            {{ label }}
+            <span class="ml-auto rounded bg-slate-100 px-1.5 py-0.5 text-[10px] dark:bg-slate-800">soon</span>
+          </span>
+          {% endfor %}
+        </nav>
+        <div class="border-t border-slate-200 px-5 py-4 text-xs text-slate-400 dark:border-slate-800 dark:text-slate-600">
+          v0.1.0
+        </div>
+      </aside>
+
+      <div class="flex flex-1 flex-col overflow-y-auto">
+        <header
+          class="flex items-center justify-between border-b border-slate-200 px-8 py-4 dark:border-slate-800"
+        >
+          <div>
+            <h1 class="text-lg font-semibold">{% block page_title %}Runs{% endblock %}</h1>
+            <p class="text-sm text-slate-500 dark:text-slate-400">
+              {% block page_subtitle %}Engineering blog architecture extraction{% endblock %}
+            </p>
+          </div>
+          <button
+            id="theme-toggle"
+            type="button"
+            aria-label="Toggle dark mode"
+            class="flex h-9 w-9 items-center justify-center rounded-md border border-slate-200 text-slate-500 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+          >
+            <svg id="icon-sun" class="hidden h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
+            </svg>
+            <svg id="icon-moon" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
+            </svg>
+          </button>
+        </header>
+        <main class="flex-1 px-8 py-6">{% block content %}{% endblock %}</main>
+      </div>
+    </div>
+
+    <script>
+      (function () {
+        var root = document.documentElement;
+        var sun = document.getElementById("icon-sun");
+        var moon = document.getElementById("icon-moon");
+        function syncIcons() {
+          var isDark = root.classList.contains("dark");
+          sun.classList.toggle("hidden", !isDark);
+          moon.classList.toggle("hidden", isDark);
+        }
+        syncIcons();
+        document.getElementById("theme-toggle").addEventListener("click", function () {
+          root.classList.toggle("dark");
+          localStorage.setItem("theme", root.classList.contains("dark") ? "dark" : "light");
+          syncIcons();
+        });
+      })();
+    </script>
+  </body>
+</html>

@@ -12,12 +12,16 @@ cascade degrades gracefully down to whatever provider(s) are available. Order:
      a free model. Self-updating safety net against future catalog rotation.
   5. Groq Cloud free tier (llama-3.3-70b-versatile) — very fast, tight TPM limits.
   6. Direct Google AI Studio (Gemini) — bigger context window, 15 RPM / 1000 RPD.
-  7. TokenRouter (api.tokenrouter.com) — paid OpenAI-compatible multi-provider
+  7. TokenRouter free aliases (api.tokenrouter.com) — rotating "-free" model
+     IDs (e.g. qwen/qwen3.8-max-free) that TokenRouter itself promos as $0,
+     capacity-constrained and not guaranteed to stay free. Same OpenAI-compatible
+     passthrough as tier 8, gated on the same tokenrouter_api_key.
+  8. TokenRouter paid (api.tokenrouter.com) — OpenAI-compatible multi-provider
      proxy, added via litellm's generic `openai/` + `api_base` passthrough
      rather than a bespoke client (litellm already abstracts "any OpenAI-shaped
-     endpoint" — this is that abstraction point, not a new one). No confirmed
-     free tier; sits after the free tiers, before the direct-OpenAI last resort.
-  8. Paid fallback (OpenAI gpt-4o-mini) — last resort, no free-tier limits.
+     endpoint" — this is that abstraction point, not a new one). Sits after the
+     free tiers, before the direct-OpenAI last resort.
+  9. Paid fallback (OpenAI gpt-4o-mini) — last resort, no free-tier limits.
 """
 
 from __future__ import annotations
@@ -66,6 +70,17 @@ def build_model_list(settings: Settings) -> list[dict]:
         )
 
     if settings.tokenrouter_api_key:
+        for model_name in settings.router.tokenrouter_free_models:
+            model_list.append(
+                {
+                    "model_name": "extraction-cascade",
+                    "litellm_params": {
+                        "model": f"openai/{model_name}",
+                        "api_base": settings.router.tokenrouter_api_base,
+                        "api_key": settings.tokenrouter_api_key,
+                    },
+                }
+            )
         model_list.append(
             {
                 "model_name": "extraction-cascade",
@@ -103,6 +118,8 @@ def build_router(settings: Settings | None = None) -> Router:
         num_retries=settings.router.num_retries,
         cooldown_time=settings.router.cooldown_time,
         allowed_fails=settings.router.allowed_fails,
+        timeout=settings.router.timeout,
+        stream_timeout=settings.router.stream_timeout,
     )
 
 
