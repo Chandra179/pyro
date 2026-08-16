@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
+from collections import defaultdict
 
 import typer
 from dotenv import load_dotenv
@@ -106,26 +108,54 @@ def extract(limit: int | None = typer.Option(None)) -> None:
     _extract_impl(limit=limit)
 
 
+class SynthesisInProgress(Exception):
+    """Raised when synthesis is already running for this company_name."""
+
+
+# One lock per company_name, shared by every caller of _synthesize_impl (the full
+# scrape->clean->extract->synthesize job in api/jobs.py and the dashboard's standalone
+# "Run synthesis" button both funnel through here). Guarding at this choke point — rather than
+# in each caller separately — is what makes it impossible for two synthesis runs to race on the
+# same company's docs, regardless of which entry point triggered them. Freeform mode's
+# full delete-then-rebuild (see run_freeform_synthesis) makes concurrent runs actively
+# destructive, not just wasteful: interleaved deletes/upserts can leave duplicate topic docs
+# behind, as happened for a Netflix "GenRec" article routed under two different AI-chosen
+# filenames by two racing runs.
+_SYNTH_LOCKS: dict[str, threading.Lock] = defaultdict(threading.Lock)
+
+
 def _synthesize_impl(company_name: str, settings: Settings | None = None) -> None:
     """Synthesize architecture docs for company_name from its already-extracted articles and
-    persist them to ArangoDB — structured mode groups by domain, freeform mode routes each
-    article into a topic file. Safe to re-run any time (e.g. after changing a synthesis prompt
-    or, in freeform mode, freeform_route_source) since it always rebuilds from the extracted
-    articles, not from a prior synthesis run's output."""
-    settings = settings or Settings()
-    with open_db_from_settings(settings) as database:
-        if settings.pipeline_mode == "freeform":
-            docs = asyncio.run(run_freeform_synthesis(database, settings, company_name))
-            for filename in docs:
-                typer.echo(f"wrote doc {filename}.md")
-        else:
-            docs = asyncio.run(
-                run_structured_synthesis(database, settings, company_name)
-            )
-            for domain in docs:
-                typer.echo(
-                    f"wrote doc architecture-{domain.lower().replace(' ', '-')} (domain: {domain})"
+    persist them to ArangoDB — structured mode groups by domain and always rebuilds; freeform
+    mode incrementally routes only not-yet-routed articles into topic files (to force a full
+    freeform rebuild, e.g. after changing the routing prompt, delete the company's docs first —
+    see run_freeform_synthesis). Raises SynthesisInProgress instead of running if synthesis is
+    already in flight for this company_name."""
+    lock = _SYNTH_LOCKS[company_name]
+    if not lock.acquire(blocking=False):
+        raise SynthesisInProgress(company_name)
+    try:
+        settings = settings or Settings()
+        with open_db_from_settings(settings) as database:
+            if settings.pipeline_mode == "freeform":
+                docs = asyncio.run(
+                    run_freeform_synthesis(database, settings, company_name)
                 )
+                if docs:
+                    for filename in docs:
+                        typer.echo(f"wrote doc {filename}.md")
+                else:
+                    typer.echo("no new articles to route; docs already up to date")
+            else:
+                docs = asyncio.run(
+                    run_structured_synthesis(database, settings, company_name)
+                )
+                for domain in docs:
+                    typer.echo(
+                        f"wrote doc architecture-{domain.lower().replace(' ', '-')} (domain: {domain})"
+                    )
+    finally:
+        lock.release()
 
 
 @app.command()

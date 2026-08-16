@@ -1,8 +1,15 @@
 """Freeform mode: no domain taxonomy — each extracted article is routed one at a time into an
-existing or new topic doc. Run via the `synthesize` command/job stage, same as structured mode;
-unlike structured mode's deterministic domain-slug keys, freeform topic filenames are AI-chosen
-and depend on processing order, so a re-run rebuilds every doc from scratch rather than upserting
-in place (see run_freeform_synthesis)."""
+existing or new topic doc. Run via the `synthesize` command/job stage, same as structured mode.
+
+Unlike structured mode's deterministic domain-slug keys, freeform topic filenames are AI-chosen,
+so routing decisions aren't naturally idempotent to replay. Rather than re-deciding every
+article's topic on every run (expensive — O(n) LLM calls with a prompt that grows with every
+existing doc — and non-deterministic, so replaying could relabel an already-settled topic under
+a new slug), each article's routing decision is persisted once (Article.routed_doc_key) and a
+run only processes articles that don't have one yet. To force a full rebuild (e.g. after
+changing the routing prompt or freeform_route_source), delete the company's docs first — via the
+dashboard's "delete all docs" or Database.delete_docs_for_company — which also clears every
+article's routed_doc_key so the next run starts over. See run_freeform_synthesis."""
 
 from __future__ import annotations
 
@@ -96,20 +103,23 @@ def _route_text(article, settings: Settings) -> str:
 async def run_freeform_synthesis(
     db: Database, settings: Settings, company_name: str
 ) -> dict[str, str]:
-    """Rebuild every topic doc for company_name from its already-extracted articles, folding
-    them in one at a time (each routing decision depends on the docs built by prior ones, so
-    this runs sequentially, not concurrently). Existing docs are cleared first: freeform
-    filenames are AI-chosen per run rather than deterministic slugs, so replaying on top of
-    stale docs would duplicate material instead of cleanly regenerating it — this is what makes
-    the command safely re-runnable after changing freeform_route_source or the routing prompt.
-    """
-    articles = db.fetch_extracted(company_name)
-    if not articles:
+    """Fold company_name's not-yet-routed extracted articles into topic docs, one at a time
+    (each routing decision depends on the docs built by prior ones in this run, so this runs
+    sequentially, not concurrently). Already-routed articles (Article.routed_doc_key set) are
+    left untouched — safe to call repeatedly as new articles get extracted, without re-deciding
+    settled topics or duplicating material. Returns only the docs touched by this run, keyed by
+    filename stem — untouched existing docs aren't included. Raises RuntimeError if
+    company_name has no extracted articles at all; returns {} if all extracted articles are
+    already routed (nothing new to do)."""
+    all_articles = db.fetch_extracted(company_name)
+    if not all_articles:
         raise RuntimeError(f"no extracted articles found for {company_name!r}")
+    articles = [a for a in all_articles if not a.routed_doc_key]
     if settings.synthesis_article_limit is not None:
         articles = articles[: settings.synthesis_article_limit]
+    if not articles:
+        return {}
 
-    db.delete_docs_for_company(company_name)
     ctx = SynthesisContext(company_name, settings, synthesis_model_params(settings))
 
     results: dict[str, str] = {}
@@ -123,5 +133,6 @@ async def run_freeform_synthesis(
         )
         stem = key.removesuffix(".md")
         db.upsert_doc(stem, company_name, content, heading=first_heading(content))
+        db.mark_routed(article.id, stem)
         results[stem] = content
     return results

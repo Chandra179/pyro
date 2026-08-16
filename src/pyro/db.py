@@ -36,6 +36,10 @@ class Article:
     extracted_facts: dict[str, Any] | None = None
     scraped_at: str | None = None
     extracted_at: str | None = None
+    # Freeform mode only: the docs._key of the topic file this article was last folded into,
+    # or None if it hasn't been routed yet. Lets run_freeform_synthesis process only new
+    # articles instead of replaying every article through the router on every run.
+    routed_doc_key: str | None = None
 
     @classmethod
     def from_doc(cls, doc: dict) -> Article:
@@ -49,6 +53,7 @@ class Article:
             extracted_facts=doc.get("extracted_facts"),
             scraped_at=doc.get("scraped_at"),
             extracted_at=doc.get("extracted_at"),
+            routed_doc_key=doc.get("routed_doc_key"),
         )
 
 
@@ -113,6 +118,7 @@ class Database:
                 "extracted_facts": None,
                 "scraped_at": _now(),
                 "extracted_at": None,
+                "routed_doc_key": None,
             }
         )
 
@@ -130,6 +136,11 @@ class Database:
                 "extracted_at": _now(),
             }
         )
+
+    def mark_routed(self, id: str, doc_key: str) -> None:
+        """Freeform mode: record that an article has been folded into docs._key doc_key, so
+        run_freeform_synthesis skips it on future runs instead of re-routing it."""
+        self._articles.update({"_key": id, "routed_doc_key": doc_key})
 
     def fetch_unprocessed(self, stage: str, limit: int | None = None) -> list[Article]:
         """stage: 'clean' (raw_html set, cleaned_text null) or
@@ -242,10 +253,31 @@ class Database:
         cursor = self._db.aql.execute(query, bind_vars={"company_name": company_name})
         return list(cursor)
 
-    def delete_doc(self, key: str) -> None:
+    def delete_doc(self, key: str, company_name: str) -> None:
+        """Deletes the doc and un-routes any articles that were folded into it (freeform mode),
+        so a future synthesis run re-routes them instead of treating them as already handled —
+        without this, a deleted topic file would never come back."""
+        query = f"""
+        FOR doc IN {self._articles.name}
+          FILTER doc.company_name == @company_name AND doc.routed_doc_key == @key
+          UPDATE doc WITH {{ routed_doc_key: null }} IN {self._articles.name}
+        """
+        self._db.aql.execute(
+            query, bind_vars={"company_name": company_name, "key": key}
+        )
         self._docs.delete(key, ignore_missing=True)
 
     def delete_docs_for_company(self, company_name: str) -> None:
+        """Deletes all docs for company_name and un-routes every one of its articles (freeform
+        mode), so a subsequent synthesis run treats them as new and rebuilds from scratch — this
+        is the supported way to force a full freeform rebuild (e.g. after changing the routing
+        prompt), since run_freeform_synthesis itself only processes unrouted articles."""
+        clear_query = f"""
+        FOR doc IN {self._articles.name}
+          FILTER doc.company_name == @company_name AND doc.routed_doc_key != null
+          UPDATE doc WITH {{ routed_doc_key: null }} IN {self._articles.name}
+        """
+        self._db.aql.execute(clear_query, bind_vars={"company_name": company_name})
         query = f"""
         FOR doc IN {self._docs.name}
           FILTER doc.company_name == @company_name

@@ -58,7 +58,7 @@ def delete_doc(company_name: str, doc_key: str) -> None:
     with open_db_from_settings(settings) as db:
         doc = db.get_doc_for_company(company_name, doc_key)
         if doc is not None:
-            db.delete_doc(doc_key)
+            db.delete_doc(doc_key, company_name)
 
 
 def delete_all_docs(company_name: str) -> None:

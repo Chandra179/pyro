@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Literal
 
-from pyro.cli import _clean_impl, _extract_impl, _synthesize_impl
+from pyro.cli import SynthesisInProgress, _clean_impl, _extract_impl, _synthesize_impl
 from pyro.config import Settings
 from pyro.db import open_db_from_settings
 from pyro.prompts import PipelineMode, build_prompts_config
@@ -111,7 +111,11 @@ def _run_job(job: Job) -> None:
         job.status = "extracting"
         _extract_impl(settings=settings)
         job.status = "synthesizing"
-        _synthesize_impl(job.company_name, settings=settings)
+        SYNTH_RUNS[job.company_name] = SynthRun(status="running")
+        try:
+            _synthesize_impl(job.company_name, settings=settings)
+        finally:
+            SYNTH_RUNS.pop(job.company_name, None)
         job.status = "done"
     except Exception as exc:
         job.status = "error"
@@ -161,6 +165,11 @@ def _run_synthesis(company_name: str, settings: Settings) -> None:
     try:
         _synthesize_impl(company_name, settings=settings)
         SYNTH_RUNS.pop(company_name, None)
+    except SynthesisInProgress:
+        # Lost the race to another synthesis run for this company (e.g. the pipeline job's
+        # own synthesize stage) that started between this thread being spawned and acquiring
+        # the lock in _synthesize_impl. That run owns SYNTH_RUNS' "running" state — leave it.
+        pass
     except Exception as exc:
         SYNTH_RUNS[company_name] = SynthRun(status="error", error=str(exc))
 
