@@ -38,7 +38,9 @@ def load_prompt(relative_path: str) -> str:
     return text
 
 
-def list_variants(stage: Literal["extraction", "synthesis"], mode: PipelineMode) -> list[str]:
+def list_variants(
+    stage: Literal["extraction", "synthesis"], mode: PipelineMode
+) -> list[str]:
     """Variant names available for a stage+mode, e.g. list_variants("synthesis", "structured")
     -> ["default"]. A variant is just a subdirectory of prompts/<stage>/<mode>/ containing the
     template files for that stage — add a new one by adding a new subdirectory, no code change

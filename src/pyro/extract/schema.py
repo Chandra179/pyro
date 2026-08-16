@@ -23,7 +23,9 @@ class ExtractedFacts(BaseModel):
     solution: str = ""
 
 
-def merge_facts(facts_list: list[ExtractedFacts], domains: list[str] = DOMAINS) -> ExtractedFacts:
+def merge_facts(
+    facts_list: list[ExtractedFacts], domains: list[str] = DOMAINS
+) -> ExtractedFacts:
     """Merge per-chunk extraction results for one article."""
     if not facts_list:
         return ExtractedFacts()

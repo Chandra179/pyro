@@ -32,13 +32,15 @@ cascade degrades gracefully down to whatever provider(s) are available. Order:
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from typing import TypeVar
 
+import litellm
 from litellm import Router
 from litellm.exceptions import RateLimitError
+from tenacity import retry_if_exception_type, stop_after_attempt, wait_fixed
+from tenacity.asyncio import AsyncRetrying
 
 from pyro.config import Settings
 
@@ -47,33 +49,50 @@ logger = logging.getLogger(__name__)
 T = TypeVar("T")
 
 
-async def call_with_rate_limit_retry(fn: Callable[[], Awaitable[T]], settings: Settings) -> T:
+def _max_tokens_for(model: str, fallback: int) -> int:
+    """Each tier's real output cap, from litellm's model registry. Falls back to
+    `fallback` (settings.extraction_max_tokens) for custom passthrough aliases
+    litellm doesn't recognize (e.g. TokenRouter/OpenCode Zen model IDs)."""
+    try:
+        return litellm.get_max_tokens(model) or fallback
+    except Exception:
+        return fallback
+
+
+def _log_rate_limit_retry(settings: Settings, retry_state) -> None:
+    logger.warning(
+        "rate limited (attempt %d/%d) — waiting %ds: %s",
+        retry_state.attempt_number,
+        settings.router.rate_limit_max_retries,
+        settings.router.rate_limit_wait_seconds,
+        retry_state.outcome.exception(),
+    )
+
+
+async def call_with_rate_limit_retry(
+    fn: Callable[[], Awaitable[T]], settings: Settings
+) -> T:
     """Retry fn() (one acompletion call) on RateLimitError, waiting router.rate_limit_wait_seconds
     between attempts. Needed because a provider-level throttle (e.g. TokenRouter's "Maximum 1
     requests within 1 minutes") can be far tighter than the cascade's own num_retries/cooldown_time,
     which only governs advancing to the *next* tier — no help when the rate-limited tier is the
     only one configured."""
-    last_error: RateLimitError | None = None
-    for attempt in range(settings.router.rate_limit_max_retries):
-        try:
+    async for attempt in AsyncRetrying(
+        stop=stop_after_attempt(settings.router.rate_limit_max_retries),
+        wait=wait_fixed(settings.router.rate_limit_wait_seconds),
+        retry=retry_if_exception_type(RateLimitError),
+        before_sleep=lambda retry_state: _log_rate_limit_retry(settings, retry_state),
+        reraise=True,
+    ):
+        with attempt:
             return await fn()
-        except RateLimitError as exc:
-            last_error = exc
-            if attempt < settings.router.rate_limit_max_retries - 1:
-                logger.warning(
-                    "rate limited (attempt %d/%d) — waiting %ds: %s",
-                    attempt + 1,
-                    settings.router.rate_limit_max_retries,
-                    settings.router.rate_limit_wait_seconds,
-                    exc,
-                )
-                await asyncio.sleep(settings.router.rate_limit_wait_seconds)
-    assert last_error is not None
-    raise last_error
+    raise AssertionError("unreachable — AsyncRetrying always returns or raises")
 
 
 def build_model_list(settings: Settings) -> list[dict]:
     model_list: list[dict] = []
+
+    default_max_tokens = settings.extraction_max_tokens
 
     if settings.openrouter_api_key:
         for model_name in settings.router.openrouter_free_models:
@@ -83,6 +102,7 @@ def build_model_list(settings: Settings) -> list[dict]:
                     "litellm_params": {
                         "model": model_name,
                         "api_key": settings.openrouter_api_key,
+                        "max_tokens": _max_tokens_for(model_name, default_max_tokens),
                     },
                 }
             )
@@ -94,6 +114,9 @@ def build_model_list(settings: Settings) -> list[dict]:
                 "litellm_params": {
                     "model": settings.router.groq_model,
                     "api_key": settings.groq_api_key,
+                    "max_tokens": _max_tokens_for(
+                        settings.router.groq_model, default_max_tokens
+                    ),
                 },
             }
         )
@@ -106,6 +129,9 @@ def build_model_list(settings: Settings) -> list[dict]:
                 "litellm_params": {
                     "model": settings.router.gemini_model,
                     "api_key": gemini_key,
+                    "max_tokens": _max_tokens_for(
+                        settings.router.gemini_model, default_max_tokens
+                    ),
                 },
             }
         )
@@ -119,6 +145,7 @@ def build_model_list(settings: Settings) -> list[dict]:
                         "model": f"openai/{model_name}",
                         "api_base": settings.router.opencode_api_base,
                         "api_key": settings.opencode_api_key,
+                        "max_tokens": default_max_tokens,  # opencode alias, not in litellm's registry
                     },
                 }
             )
@@ -131,6 +158,7 @@ def build_model_list(settings: Settings) -> list[dict]:
                     "model": f"openai/{settings.router.tokenrouter_model}",
                     "api_base": settings.router.tokenrouter_api_base,
                     "api_key": settings.tokenrouter_api_key,
+                    "max_tokens": default_max_tokens,  # tokenrouter alias, not in litellm's registry
                 },
             }
         )
@@ -142,6 +170,9 @@ def build_model_list(settings: Settings) -> list[dict]:
                 "litellm_params": {
                     "model": settings.router.openai_model,
                     "api_key": settings.openai_api_key,
+                    "max_tokens": _max_tokens_for(
+                        settings.router.openai_model, default_max_tokens
+                    ),
                 },
             }
         )
@@ -187,12 +218,19 @@ def synthesis_model_params(settings: Settings | None = None) -> dict:
     TokenRouter — is configured.
     """
     settings = settings or Settings()
-    if settings.openrouter_api_key and settings.synthesis_model.startswith("openrouter/"):
-        return {"model": settings.synthesis_model, "api_key": settings.openrouter_api_key}
+    if settings.openrouter_api_key and settings.synthesis_model.startswith(
+        "openrouter/"
+    ):
+        return {
+            "model": settings.synthesis_model,
+            "api_key": settings.openrouter_api_key,
+        }
 
     model_list = build_model_list(settings)
     if not model_list:
-        raise RuntimeError("No LLM provider configured — set at least OPENROUTER_API_KEY.")
+        raise RuntimeError(
+            "No LLM provider configured — set at least OPENROUTER_API_KEY."
+        )
     return dict(model_list[-1]["litellm_params"])
 
 

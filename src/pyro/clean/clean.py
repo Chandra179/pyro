@@ -66,7 +66,11 @@ def _collapse_code_blocks(root: Tag, line_threshold: int) -> None:
                 if cls.startswith("language-"):
                     lang = cls.removeprefix("language-")
                     break
-        placeholder = f"[code omitted: {line_count} lines" + (f", language: {lang}" if lang else "") + "]"
+        placeholder = (
+            f"[code omitted: {line_count} lines"
+            + (f", language: {lang}" if lang else "")
+            + "]"
+        )
         pre.replace_with(placeholder)
 
 

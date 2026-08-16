@@ -24,6 +24,7 @@ dependencies = [
     "python-multipart>=0.0.9",
     "markdown>=3.10.3",
     "pymdown-extensions>=11.0.1",
+    "tenacity>=9.0",
 ]
 
 [project.scripts]

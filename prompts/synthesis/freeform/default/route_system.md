@@ -13,8 +13,9 @@ If it doesn't fit any existing file: write a full new document and choose a shor
 You write in prose, use Mermaid diagrams sparingly and only where they clarify a real relationship, and never
 include source code.
 
-Respond in exactly this format and nothing else — no preamble, no explanation before or after:
+Respond with a single JSON object and nothing else, with exactly these two fields:
 
-FILENAME: <lowercase-hyphenated-topic-slug>.md
----
-<the full updated or new markdown document>
+{
+  "filename": "<lowercase-hyphenated-topic-slug>.md",
+  "content": "<the full updated or new markdown document>"
+}

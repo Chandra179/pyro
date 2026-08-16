@@ -92,7 +92,12 @@ class Database:
     # --- articles: raw scrape -> clean -> extract pipeline state ---
 
     def upsert_raw(
-        self, id: str, source_url: str, title: str | None, company_name: str, raw_html: str
+        self,
+        id: str,
+        source_url: str,
+        title: str | None,
+        company_name: str,
+        raw_html: str,
     ) -> None:
         """Insert a newly scraped article. No-ops if the id already exists (dedup)."""
         if self._articles.has(id):
@@ -132,7 +137,9 @@ class Database:
         if stage == "clean":
             filter_clause = "FILTER doc.raw_html != null AND doc.cleaned_text == null"
         elif stage == "extract":
-            filter_clause = "FILTER doc.cleaned_text != null AND doc.extracted_at == null"
+            filter_clause = (
+                "FILTER doc.cleaned_text != null AND doc.extracted_at == null"
+            )
         else:
             raise ValueError(f"unknown stage: {stage}")
         limit_clause = f"LIMIT {int(limit)}" if limit is not None else ""
@@ -144,6 +151,7 @@ class Database:
         query = f"""
         FOR doc IN {self._articles.name}
           FILTER doc.company_name == @company_name AND doc.extracted_at != null
+          SORT doc.extracted_at
           RETURN doc
         """
         cursor = self._db.aql.execute(query, bind_vars={"company_name": company_name})
@@ -161,7 +169,9 @@ class Database:
         cursor = self._db.aql.execute(query, bind_vars={"company_name": company_name})
         return [Article.from_doc(d) for d in cursor]
 
-    def get_article_for_company(self, company_name: str, article_id: str) -> Article | None:
+    def get_article_for_company(
+        self, company_name: str, article_id: str
+    ) -> Article | None:
         """Like get_doc_for_company: article ids are unique on their own, but this also checks
         company ownership so one company's dashboard view can't fetch another's article by key."""
         doc = self._articles.get(article_id)
@@ -195,7 +205,9 @@ class Database:
 
     # --- docs: synthesized/routed architecture documents (replaces output/*.md) ---
 
-    def upsert_doc(self, key: str, company_name: str, content: str, heading: str | None = None) -> None:
+    def upsert_doc(
+        self, key: str, company_name: str, content: str, heading: str | None = None
+    ) -> None:
         """Create or overwrite a synthesized doc, keyed by its slug (e.g. domain or AI-chosen topic)."""
         doc = {
             "_key": key,

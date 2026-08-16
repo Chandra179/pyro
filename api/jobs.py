@@ -23,7 +23,9 @@ from pyro.prompts import PipelineMode, build_prompts_config
 from pyro.scrape.fetch import scrape_urls
 from pyro.scrape.sitemap import fetch_sitemap_urls
 
-JobStatus = Literal["pending", "scraping", "cleaning", "extracting", "synthesizing", "done", "error"]
+JobStatus = Literal[
+    "pending", "scraping", "cleaning", "extracting", "synthesizing", "done", "error"
+]
 
 _STAGE_LABELS: dict[JobStatus, str] = {
     "pending": "Queued",
@@ -67,7 +69,9 @@ class Job:
 JOBS: dict[str, Job] = {}
 
 
-async def _resolve_urls(url: str, settings: Settings) -> tuple[list[str], Literal["sitemap", "article"]]:
+async def _resolve_urls(
+    url: str, settings: Settings
+) -> tuple[list[str], Literal["sitemap", "article"]]:
     """A submitted URL is either a sitemap.xml (crawl the whole blog) or a single
     article page (extract just that one). `fetch_sitemap_urls` already raises
     `ValueError` when the response isn't valid sitemap XML — reused here as the
@@ -82,7 +86,9 @@ async def _resolve_urls(url: str, settings: Settings) -> tuple[list[str], Litera
 def _run_job(job: Job) -> None:
     settings = Settings(
         pipeline_mode=job.pipeline_mode,
-        prompts=build_prompts_config(job.pipeline_mode, job.extraction_variant, job.synthesis_variant),
+        prompts=build_prompts_config(
+            job.pipeline_mode, job.extraction_variant, job.synthesis_variant
+        ),
     )
     try:
         job.status = "scraping"
@@ -91,13 +97,19 @@ def _run_job(job: Job) -> None:
         job.discovered_count = len(urls)
         with open_db_from_settings(settings) as database:
             job.scraped_count = asyncio.run(
-                scrape_urls(urls, database, job.company_name, limit=job.limit, config=settings.scrape)
+                scrape_urls(
+                    urls,
+                    database,
+                    job.company_name,
+                    limit=job.limit,
+                    config=settings.scrape,
+                )
             )
 
         job.status = "cleaning"
         _clean_impl(settings=settings)
         job.status = "extracting"
-        _extract_impl(company_name=job.company_name, settings=settings)
+        _extract_impl(settings=settings)
         job.status = "synthesizing"
         _synthesize_impl(job.company_name, settings=settings)
         job.status = "done"
@@ -155,4 +167,6 @@ def _run_synthesis(company_name: str, settings: Settings) -> None:
 
 def submit_synthesis(company_name: str, settings: Settings) -> None:
     SYNTH_RUNS[company_name] = SynthRun(status="running")
-    threading.Thread(target=_run_synthesis, args=(company_name, settings), daemon=True).start()
+    threading.Thread(
+        target=_run_synthesis, args=(company_name, settings), daemon=True
+    ).start()

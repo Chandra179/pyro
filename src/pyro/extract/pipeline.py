@@ -11,10 +11,11 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+from collections.abc import Callable
+from typing import TypeVar
 
 from json_repair import repair_json
 from litellm import acompletion
-from pydantic import ValidationError
 
 from pyro.clean.chunk import chunk_text
 from pyro.config import Settings
@@ -30,15 +31,56 @@ from pyro.router import call_with_rate_limit_retry, concrete_model_params
 
 logger = logging.getLogger(__name__)
 
+T = TypeVar("T")
+
 
 def _decoding_params(settings: Settings) -> dict:
-    """Shared temperature/frequency_penalty/max_tokens for extraction calls — see
-    Settings.extraction_temperature docstring for why these matter against free-tier models."""
+    """Shared temperature/frequency_penalty for extraction calls — see
+    Settings.extraction_temperature docstring for why these matter against free-tier models.
+    max_tokens is deliberately not here: it's tier-specific (see router._max_tokens_for) and
+    comes from each model's own `params` in extract_chunk below."""
     return {
         "temperature": settings.extraction_temperature,
         "frequency_penalty": settings.extraction_frequency_penalty,
-        "max_tokens": settings.extraction_max_tokens,
     }
+
+
+async def _run_model_cascade(
+    messages: list[dict],
+    model_params: list[dict],
+    parse_response: Callable[[str], T],
+    decoding_params: dict | None,
+    settings: Settings,
+    extra_kwargs: dict | None = None,
+) -> T:
+    """Call through the concrete model list, applying parse_response to each response and
+    advancing to the next model on any failure — a raised provider error (429/503/timeout/etc.)
+    or parse_response rejecting the content (schema-invalid JSON, degenerate output, ...). The
+    Router's own fallback only advances tiers on raised exceptions, so a 200 OK response that
+    parse_response rejects needs this loop rather than Router's internal fallback state."""
+    last_error: Exception | None = None
+    for params in model_params:
+        try:
+            response = await call_with_rate_limit_retry(
+                lambda params=params: acompletion(
+                    messages=messages,
+                    **(decoding_params or {}),
+                    **(extra_kwargs or {}),
+                    **params,
+                ),
+                settings,
+            )
+            return parse_response(response.choices[0].message.content)
+        except Exception as exc:
+            logger.warning("model %s failed: %s", params["model"], exc)
+            last_error = exc
+
+    raise RuntimeError(f"all models in cascade failed: {last_error}") from last_error
+
+
+def _parse_extracted_facts(raw: str) -> ExtractedFacts:
+    parsed = repair_json(raw, return_objects=True)
+    return ExtractedFacts.model_validate(parsed)
 
 
 async def extract_chunk(
@@ -52,40 +94,24 @@ async def extract_chunk(
     decoding_params: dict | None = None,
     settings: Settings | None = None,
 ) -> ExtractedFacts:
-    """Call through the concrete model list, validating each response against the
-    Pydantic schema and advancing to the next model on any failure."""
     settings = settings or Settings()
-    last_error: Exception | None = None
-    for params in model_params:
-        try:
-            response = await call_with_rate_limit_retry(
-                lambda params=params: acompletion(
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {
-                            "role": "user",
-                            "content": user_template.format(
-                                title=title, url=url, content=content, domains=", ".join(domains)
-                            ),
-                        },
-                    ],
-                    response_format={"type": "json_object"},
-                    **(decoding_params or {}),
-                    **params,
-                ),
-                settings,
-            )
-            raw = response.choices[0].message.content
-            parsed = repair_json(raw, return_objects=True)
-            return ExtractedFacts.model_validate(parsed)
-        except ValidationError as exc:
-            logger.warning("model %s returned invalid JSON/schema: %s", params["model"], exc)
-            last_error = exc
-        except Exception as exc:  # provider-level error (429/503/timeout/etc.)
-            logger.warning("model %s failed: %s", params["model"], exc)
-            last_error = exc
-
-    raise RuntimeError(f"all models in cascade failed: {last_error}") from last_error
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {
+            "role": "user",
+            "content": user_template.format(
+                title=title, url=url, content=content, domains=", ".join(domains)
+            ),
+        },
+    ]
+    return await _run_model_cascade(
+        messages,
+        model_params,
+        _parse_extracted_facts,
+        decoding_params,
+        settings,
+        extra_kwargs={"response_format": {"type": "json_object"}},
+    )
 
 
 async def extract_article(
@@ -128,6 +154,12 @@ def _is_degenerate(text: str) -> bool:
     return bool(_DEGENERATE_REPEAT_RE.search(text))
 
 
+def _parse_freeform_text(raw: str) -> str:
+    if _is_degenerate(raw):
+        raise ValueError("degenerate output (repeated-word collapse)")
+    return raw
+
+
 async def extract_freeform_chunk(
     title: str,
     url: str,
@@ -140,42 +172,40 @@ async def extract_freeform_chunk(
 ) -> str:
     """Same model-cascade fallback as extract_chunk, but no schema — returns raw text."""
     settings = settings or Settings()
-    last_error: Exception | None = None
-    for params in model_params:
-        try:
-            response = await call_with_rate_limit_retry(
-                lambda params=params: acompletion(
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_template.format(title=title, url=url, content=content)},
-                    ],
-                    **(decoding_params or {}),
-                    **params,
-                ),
-                settings,
-            )
-            text = response.choices[0].message.content
-            if _is_degenerate(text):
-                raise ValueError("degenerate output (repeated-word collapse)")
-            return text
-        except Exception as exc:  # provider-level error (429/503/timeout/etc.) or degenerate output
-            logger.warning("model %s failed: %s", params["model"], exc)
-            last_error = exc
-
-    raise RuntimeError(f"all models in cascade failed: {last_error}") from last_error
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {
+            "role": "user",
+            "content": user_template.format(title=title, url=url, content=content),
+        },
+    ]
+    return await _run_model_cascade(
+        messages, model_params, _parse_freeform_text, decoding_params, settings
+    )
 
 
-async def extract_article_freeform(title: str, url: str, cleaned_text: str, settings: Settings) -> str:
+async def extract_article_freeform(
+    title: str, url: str, cleaned_text: str, settings: Settings
+) -> str:
     """Freeform mode: one plain-text summary per article, no chunking/merging."""
     model_params = concrete_model_params(settings)
     system_prompt = extraction_freeform_system_prompt(settings)
     user_template = extraction_freeform_user_prompt(settings)
     return await extract_freeform_chunk(
-        title, url, cleaned_text, model_params, system_prompt, user_template, _decoding_params(settings), settings
+        title,
+        url,
+        cleaned_text,
+        model_params,
+        system_prompt,
+        user_template,
+        _decoding_params(settings),
+        settings,
     )
 
 
-async def run_extraction(db: Database, settings: Settings, limit: int | None = None) -> int:
+async def run_extraction(
+    db: Database, settings: Settings, limit: int | None = None
+) -> int:
     """Extract facts for all unextracted, cleaned articles. Returns count processed."""
     articles = db.fetch_unprocessed("extract", limit=limit)
     if not articles:
@@ -187,7 +217,10 @@ async def run_extraction(db: Database, settings: Settings, limit: int | None = N
         async with sem:
             try:
                 facts = await extract_article(
-                    article.title or "", article.source_url, article.cleaned_text, settings
+                    article.title or "",
+                    article.source_url,
+                    article.cleaned_text,
+                    settings,
                 )
             except Exception:
                 logger.exception("extraction failed for %s", article.id)

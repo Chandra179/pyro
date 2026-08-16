@@ -6,7 +6,9 @@ import asyncio
 import logging
 import random
 
-from playwright.async_api import async_playwright
+from playwright.async_api import Page, async_playwright
+from tenacity import retry_if_exception_type, stop_after_attempt, wait_incrementing
+from tenacity.asyncio import AsyncRetrying
 
 from pyro.config import ScrapeConfig
 from pyro.db import Database
@@ -15,6 +17,28 @@ from pyro.urlkey import normalize_url
 logger = logging.getLogger(__name__)
 
 _DEFAULT_SCRAPE_CONFIG = ScrapeConfig()
+
+
+class _ChallengePageError(Exception):
+    """Raised when a fetched page looks like a bot-detection challenge, so the
+    same retry loop that handles network errors also retries these."""
+
+
+async def _fetch_page_once(
+    context, url: str, config: ScrapeConfig
+) -> tuple[str | None, str]:
+    page: Page = await context.new_page()
+    try:
+        await page.goto(url, wait_until="domcontentloaded", timeout=60_000)
+        await page.wait_for_timeout(config.settle_ms)
+        title = await page.title()
+        html = await page.content()
+    finally:
+        await page.close()
+
+    if any(marker in html for marker in config.challenge_markers):
+        raise _ChallengePageError(f"challenge/blocked page for {url}")
+    return title, html
 
 
 async def scrape_urls(
@@ -37,12 +61,16 @@ async def scrape_urls(
     if not pending:
         return 0
 
-    sem = asyncio.Semaphore(concurrency if concurrency is not None else config.concurrency)
+    sem = asyncio.Semaphore(
+        concurrency if concurrency is not None else config.concurrency
+    )
     scraped_count = 0
     lock = asyncio.Lock()
 
     async with async_playwright() as pw:
-        browser = await pw.chromium.launch(args=["--disable-blink-features=AutomationControlled"])
+        browser = await pw.chromium.launch(
+            args=["--disable-blink-features=AutomationControlled"]
+        )
         context = await browser.new_context(
             user_agent=config.user_agent,
             viewport={"width": config.viewport_width, "height": config.viewport_height},
@@ -57,28 +85,31 @@ async def scrape_urls(
                 await asyncio.sleep(random.uniform(0, 1.5))
 
                 title, html = None, None
-                for attempt in range(1, config.max_attempts + 1):
-                    page = await context.new_page()
-                    try:
-                        await page.goto(url, wait_until="domcontentloaded", timeout=60_000)
-                        await page.wait_for_timeout(config.settle_ms)
-                        title = await page.title()
-                        html = await page.content()
-                    except Exception:
-                        logger.exception("failed to fetch %s (attempt %d)", url, attempt)
-                        title, html = None, None
-                    finally:
-                        await page.close()
-
-                    if html is not None and not any(marker in html for marker in config.challenge_markers):
-                        break
-                    logger.warning("challenge/blocked page for %s (attempt %d)", url, attempt)
+                try:
+                    async for retry_attempt in AsyncRetrying(
+                        stop=stop_after_attempt(config.max_attempts),
+                        wait=wait_incrementing(
+                            start=config.retry_backoff_s,
+                            increment=config.retry_backoff_s,
+                        ),
+                        retry=retry_if_exception_type(Exception),
+                        before_sleep=lambda rs: logger.warning(
+                            "fetch failed for %s (attempt %d/%d): %s",
+                            url,
+                            rs.attempt_number,
+                            config.max_attempts,
+                            rs.outcome.exception(),
+                        ),
+                    ):
+                        with retry_attempt:
+                            title, html = await _fetch_page_once(context, url, config)
+                except Exception:
                     title, html = None, None
-                    if attempt < config.max_attempts:
-                        await asyncio.sleep(config.retry_backoff_s * attempt)
 
                 if html is None:
-                    logger.error("giving up on %s after %d attempts", url, config.max_attempts)
+                    logger.error(
+                        "giving up on %s after %d attempts", url, config.max_attempts
+                    )
                     return
 
             article_id = normalize_url(url)

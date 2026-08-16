@@ -128,7 +128,16 @@ class ArangoConfig(BaseModel):
 
 
 class CleanConfig(BaseModel):
-    boilerplate_tags: list[str] = ["nav", "header", "footer", "aside", "script", "style", "noscript", "form"]
+    boilerplate_tags: list[str] = [
+        "nav",
+        "header",
+        "footer",
+        "aside",
+        "script",
+        "style",
+        "noscript",
+        "form",
+    ]
     boilerplate_selectors: list[str] = [
         "[class*=comment]",
         "[id*=comment]",
@@ -141,7 +150,9 @@ class CleanConfig(BaseModel):
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore", yaml_file=_CONFIG_YAML_PATH)
+    model_config = SettingsConfigDict(
+        env_file=".env", extra="ignore", yaml_file=_CONFIG_YAML_PATH
+    )
 
     # Secrets — env/.env only, never sourced from config.yaml.
     openrouter_api_key: str | None = None
@@ -162,11 +173,12 @@ class Settings(BaseSettings):
     extraction_concurrency: int = 5
 
     # Decoding controls for extraction calls. Free-tier models are the most prone to
-    # repetition-loop collapse (e.g. a token like "Lorem" repeating indefinitely) — a low
-    # temperature plus a frequency penalty discourages the model from reusing a token it's
-    # already emitted, and max_tokens caps how much damage a collapse can still do.
+    # repetition-loop collapse — a low temperature plus a frequency penalty discourages
+    # the model from reusing a token it's already emitted.
     extraction_temperature: float = 0.3
     extraction_frequency_penalty: float = 0.4
+    # Fallback output cap, used only for cascade tiers whose model litellm doesn't
+    # recognize (see router._max_tokens_for) — known models get their own real limit.
     extraction_max_tokens: int = 2000
 
     # Chunking for outlier posts.

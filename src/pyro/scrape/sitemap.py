@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import gzip
 from urllib.parse import urlparse
 
 import httpx
@@ -15,7 +16,10 @@ _DEFAULT_SITEMAP_CONFIG = SitemapConfig()
 
 
 def _is_article_url(
-    url: str, non_article_path_segments: list[str] = _DEFAULT_SITEMAP_CONFIG.non_article_path_segments
+    url: str,
+    non_article_path_segments: list[
+        str
+    ] = _DEFAULT_SITEMAP_CONFIG.non_article_path_segments,
 ) -> bool:
     if urlparse(url).path in ("", "/"):
         return False  # bare site root, not an article
@@ -36,7 +40,9 @@ async def fetch_sitemap_urls(
     # Some blogs (e.g. Medium-hosted ones) serve a JS app shell instead of raw
     # XML to clients without a browser-like User-Agent.
     headers = {"User-Agent": config.user_agent}
-    client = client or httpx.AsyncClient(timeout=30.0, follow_redirects=True, headers=headers)
+    client = client or httpx.AsyncClient(
+        timeout=30.0, follow_redirects=True, headers=headers
+    )
     try:
         urls = await _fetch_locs(sitemap_url, client)
         return [u for u in urls if _is_article_url(u, config.non_article_path_segments)]
@@ -48,8 +54,13 @@ async def fetch_sitemap_urls(
 async def _fetch_locs(url: str, client: httpx.AsyncClient) -> list[str]:
     resp = await client.get(url)
     resp.raise_for_status()
+    content = resp.content
+    # Gzip-compressed sitemaps (common with WordPress/Yoast SEO, e.g. sitemap.xml.gz) start with
+    # the gzip magic bytes regardless of what the URL or content-type claims.
+    if content[:2] == b"\x1f\x8b":
+        content = gzip.decompress(content)
     try:
-        root = etree.fromstring(resp.content)
+        root = etree.fromstring(content)
     except etree.XMLSyntaxError as exc:
         raise ValueError(
             f"{url} did not return valid XML (got content-type "
@@ -70,4 +81,8 @@ async def _fetch_locs(url: str, client: httpx.AsyncClient) -> list[str]:
             urls.extend(await _fetch_locs(child_url, client))
         return urls
 
-    return [loc.text.strip() for loc in root.findall(".//sm:url/sm:loc", namespaces=_NS) if loc.text]
+    return [
+        loc.text.strip()
+        for loc in root.findall(".//sm:url/sm:loc", namespaces=_NS)
+        if loc.text
+    ]

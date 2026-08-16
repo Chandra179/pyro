@@ -16,7 +16,9 @@ import html
 import markdown as md
 
 
-def _mermaid_fence(source: str, language: str, css_class: str, options: dict, md, **kwargs) -> str:
+def _mermaid_fence(
+    source: str, language: str, css_class: str, options: dict, md, **kwargs
+) -> str:
     return f'<pre class="not-prose mermaid">{html.escape(source)}</pre>'
 
 

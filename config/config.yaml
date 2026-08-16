@@ -1,29 +1,27 @@
 # Non-secret pipeline configuration, loaded by src/pyro/config.py:Settings.
-# API keys stay out of this file — set them in .env (see .env.example).
-# Any value here can still be overridden per-environment via an env var of the
-# same (upper-cased, flat fields only) name, e.g. EXTRACTION_CONCURRENCY=10.
+# API keys stay in .env. Any value here can be overridden via an env var of
+# the same name, e.g. EXTRACTION_CONCURRENCY=10.
 #
-# Sections below are grouped by who would change a value and why:
-#   1. Business/product config   — what the pipeline decides (taxonomy, mode, prompts).
-#   2. Temporary dev/test overrides — must be reverted before a real run.
-#   3. System/infra config       — how the pipeline runs (timeouts, concurrency, retries).
+# Only values that actually differ from config.py's field defaults belong here — a value
+# restated with the same default silently shadows any future change to that default (bit us
+# once with sitemap.non_article_path_segments). 1. Business/product config (always explicit,
+# even where it matches the default, since this is the point of business config). 2. Temporary
+# dev/test overrides (revert before a real run). 3. System/infra overrides.
 
 # ============================================================================
 # 1. Business / product configuration
 # ============================================================================
 
-# "structured" (default): schema-validated extraction + grouped batch
-# synthesis per domain. "freeform": plain-text extraction, no domain
-# grouping — each article is routed into an existing or new topic file.
-pipeline_mode: "structured"
+# "structured" (default): schema-validated extraction + grouped batch synthesis per
+# domain. "freeform": no domain grouping — each article is routed into an existing
+# or new topic file instead.
+pipeline_mode: "freeform"
 
-# "freeform" mode only: what routing reads for each article. "summary"
-# (default) uses the LLM-generated extraction summary; "cleaned_text" skips
-# that summary and feeds the article's full cleaned text into routing instead.
+# freeform mode only: "summary" (default) routes on the LLM-generated extraction
+# summary; "cleaned_text" routes on the article's full cleaned text instead.
 freeform_route_source: "cleaned_text"
 
-# Fixed domain taxonomy for extraction classification ("structured" mode
-# only). "Other" is the required fallback for anything that doesn't fit.
+# Fixed domain taxonomy (structured mode only). "Other" is the required fallback.
 domains:
   - Authentication
   - Recommendation Engine
@@ -35,9 +33,8 @@ domains:
   - Media/Content Pipeline
   - Other
 
-# Prompt template paths, relative to the top-level prompts/ dir. Point any
-# field at a different file to swap that prompt — picked up at runtime, no
-# restart needed.
+# Prompt template paths, relative to the top-level prompts/ dir. Swap a field to a
+# different file to change that prompt, picked up at runtime.
 prompts:
   extraction_system: "extraction/structured/default/system.md"
   extraction_user: "extraction/structured/default/user.md"
@@ -51,154 +48,29 @@ prompts:
   synthesis_freeform_route_user: "synthesis/freeform/default/route_user.md"
 
 # ============================================================================
-# 2. TEMPORARY dev/test overrides — REVERT before a real/production run
+# 2. TEMPORARY dev/test overrides — revert before a real run
 # ============================================================================
 
-# Both cut cost/latency for cheap local test runs by capping how much
-# synthesis actually does. Remove or raise once the prompts are stable.
+# Caps synthesis for cheap local test runs. Remove/raise once prompts are stable.
 synthesis_batch_size: 2
-synthesis_article_limit: 2
+synthesis_article_limit: 5
 
 # ============================================================================
-# 3. System / infrastructure configuration
+# 3. System / infrastructure overrides — only where these differ from config.py
 # ============================================================================
 
-# --- Database ---
-
-# ArangoDB connection shape (see docker-compose.yml). Credentials
-# (ARANGO_USERNAME/ARANGO_PASSWORD) stay in .env, not here.
-arango:
-  host: "http://localhost:8529"
-  database: "pyro"
-  articles_collection: "articles"
-  docs_collection: "docs"
-
-# --- Extraction (Pass 1) ---
-
-# Concurrency, bounded to the active tier's RPM limit. TokenRouter's paid deepseek tier throttles
-# to just 1 request/minute ("Maximum 1 requests within 1 minutes") — concurrency above 1 just
-# means more requests immediately hit that limit and burn rate_limit_max_retries attempts for
-# nothing. Raise this back up once running against a tier with a real RPM budget.
-extraction_rpm_limit: 20
+# Concurrency, bounded to the active tier's RPM limit. TokenRouter's paid deepseek tier
+# throttles to 1 req/min — raise this once running against a tier with real RPM budget.
 extraction_concurrency: 1
 
-# Decoding controls for extraction calls. Free-tier models (see
-# router.openrouter_free_models below) are the most prone to repetition-loop
-# collapse — a token like "Lorem" repeating indefinitely once emitted.
-# frequency_penalty discourages reusing a token the model has already
-# generated; a lower temperature makes it less likely to wander into that
-# state in the first place; max_tokens caps how much output a collapse can
-# still produce before being cut off.
-#
-# max_tokens is set high (100000) because the active tier is TokenRouter's
-# deepseek-v4-flash-0731, which has a 1M-token combined input+output context
-# — plenty of headroom. NOTE: this value is shared across the whole model
-# cascade below, not per-tier — if a fallback tier with a lower output cap
-# (e.g. gpt-4o-mini's 16,384) ever gets exercised, that tier's provider may
-# reject the request outright rather than clamp it, so it'll just get skipped
-# in favor of the next tier. Fine while running on TokenRouter only; revisit
-# if the OpenAI/Groq/Gemini/OpenRouter tiers become load-bearing.
-extraction_temperature: 0.3
-extraction_frequency_penalty: 0.4
+# Fallback output cap for cascade tiers litellm's model registry doesn't recognize
+# (see router._max_tokens_for) — raised well above the code default (2000).
 extraction_max_tokens: 100000
 
-# Chunking for outlier posts.
-chunk_token_threshold: 8000
-chunk_overlap_tokens: 500
-
-# --- Synthesis (Pass 2) ---
-
-# Only takes effect when OPENROUTER_API_KEY is set AND this value is
-# "openrouter/"-prefixed (see synthesis_model_params() in router.py) — that's
-# not the current setup (TokenRouter only), so this is inert for now and
-# synthesis instead automatically uses the model cascade's last/highest tier,
-# which resolves to DeepSeek-v4-Flash (router.tokenrouter_model) below.
+# Not the current setup (TokenRouter only) — see synthesis_model_params() in router.py.
 synthesis_model: "deepseek/deepseek-v4-flash-0731"
-# Narrative deep-dive synthesis output is far longer than a fixed per-entity
-# catalog format — give the final pass room to not get cut off.
-synthesis_max_tokens: 16000
 
-# --- LLM model cascade ---
-
-# LiteLLM Router cascade (see router.py for tier ordering/rationale).
 router:
-  num_retries: 2
-  cooldown_time: 30
-  allowed_fails: 1
-  # Per-request cap so a hung/slow model raises a timeout instead of blocking
-  # forever — required for fallback to trigger on a stall, not just an error.
+  # Per-request cap so a stalled model raises a timeout and triggers fallback —
+  # tighter than config.py's default (60s).
   timeout: 20
-  stream_timeout: 60
-  tokenrouter_model: "deepseek/deepseek-v4-flash-0731"
-  tokenrouter_api_base: "https://api.tokenrouter.com/v1"
-  # TokenRouter's own "-free" aliases — rotating time-boxed/capacity-limited
-  # promos, not a stable free tier. Tried before tokenrouter_model above.
-  tokenrouter_free_models:
-    - "qwen/qwen3.8-max-free"
-  openrouter_free_models:
-    - "openrouter/openai/gpt-oss-20b:free"
-    - "openrouter/nvidia/nemotron-3-super-120b-a12b:free"
-    - "openrouter/google/gemma-4-31b-it:free"
-    - "openrouter/openrouter/free"
-  groq_model: "groq/llama-3.3-70b-versatile"
-  gemini_model: "gemini/gemini-2.5-flash"
-  openai_model: "gpt-4o-mini"
-  # Same-tier retry for a rate-limited call (distinct from num_retries/cooldown_time above,
-  # which only govern advancing to the *next* cascade tier — no help when the rate-limited tier
-  # is the only one configured, as with TokenRouter-only). Wait it out and try again instead of
-  # failing the whole job.
-  rate_limit_max_retries: 5
-  rate_limit_wait_seconds: 65
-
-# --- Scraping & cleaning ---
-
-# Playwright scraping (raw phase).
-scrape:
-  concurrency: 5
-  settle_ms: 3000
-  max_attempts: 3
-  retry_backoff_s: 8
-  user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
-  viewport_width: 1280
-  viewport_height: 900
-  locale: "en-US"
-  # Markers identifying a bot-detection challenge page so it can be retried
-  # instead of silently stored as if it were real article content.
-  challenge_markers:
-    - "Attention Required! | Cloudflare"
-    - "Just a moment..."
-    - "cf-chl"
-
-# Sitemap discovery.
-sitemap:
-  user_agent: "Mozilla/5.0 (compatible; pyro-blog-crawler/1.0)"
-  # Blog platforms commonly list tag/category/author/about pages alongside
-  # actual posts in their sitemap — filtered generically, not company-specific.
-  non_article_path_segments:
-    - "/tagged/"
-    - "/tag/"
-    - "/category/"
-    - "/categories/"
-    - "/author/"
-    - "/about"
-
-# HTML cleaning (boilerplate stripping).
-code_block_line_threshold: 15
-clean:
-  boilerplate_tags:
-    - nav
-    - header
-    - footer
-    - aside
-    - script
-    - style
-    - noscript
-    - form
-  boilerplate_selectors:
-    - "[class*=comment]"
-    - "[id*=comment]"
-    - "[class*=related]"
-    - "[class*=sidebar]"
-    - "[class*=newsletter]"
-    - "[class*=subscribe]"
-    - "[class*=cookie]"

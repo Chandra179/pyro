@@ -60,6 +60,7 @@ def test_concrete_model_params_carries_credentials_for_direct_acompletion_calls(
             "model": "openai/deepseek/deepseek-v4-flash-0731",
             "api_base": "https://api.tokenrouter.com/v1",
             "api_key": "tr-key",
+            "max_tokens": settings.extraction_max_tokens,
         }
     ]
 
