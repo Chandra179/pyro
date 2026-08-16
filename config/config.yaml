@@ -53,7 +53,7 @@ prompts:
 
 # Caps synthesis for cheap local test runs. Remove/raise once prompts are stable.
 synthesis_batch_size: 2
-synthesis_article_limit: 5
+synthesis_article_limit: 100
 
 # ============================================================================
 # 3. System / infrastructure overrides — only where these differ from config.py

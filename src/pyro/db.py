@@ -201,6 +201,20 @@ class Database:
         """
         self._db.aql.execute(query, bind_vars={"company_name": company_name})
 
+    def list_companies_with_pending_synthesis(self) -> list[str]:
+        """Freeform mode only: distinct company_names with at least one extracted article that
+        hasn't been routed into a doc yet (routed_doc_key == null), for a cron job to pick up
+        instead of a person clicking "Run synthesis". Structured mode has no per-article routing
+        state — every article always looks "pending" there, since run_structured_synthesis
+        always rebuilds from scratch — so a cron job driven by this must be freeform-only, or it
+        would re-run full (costly) synthesis for every company on every tick."""
+        query = f"""
+        FOR doc IN {self._articles.name}
+          FILTER doc.extracted_at != null AND doc.routed_doc_key == null
+          RETURN DISTINCT doc.company_name
+        """
+        return sorted(self._db.aql.execute(query))
+
     def list_company_names(self) -> list[str]:
         """Distinct company names seen across both collections, for the dashboard's
         company picker."""

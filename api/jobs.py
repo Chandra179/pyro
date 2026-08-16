@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Literal
 
-from pyro.cli import SynthesisInProgress, _clean_impl, _extract_impl, _synthesize_impl
+from pyro.cli import _clean_impl, _extract_impl, _synthesize_impl
 from pyro.config import Settings
 from pyro.db import open_db_from_settings
 from pyro.prompts import PipelineMode, build_prompts_config
@@ -111,11 +111,7 @@ def _run_job(job: Job) -> None:
         job.status = "extracting"
         _extract_impl(settings=settings)
         job.status = "synthesizing"
-        SYNTH_RUNS[job.company_name] = SynthRun(status="running")
-        try:
-            _synthesize_impl(job.company_name, settings=settings)
-        finally:
-            SYNTH_RUNS.pop(job.company_name, None)
+        _synthesize_impl(job.company_name, settings=settings)
         job.status = "done"
     except Exception as exc:
         job.status = "error"
@@ -146,36 +142,3 @@ def submit_job(
 
 def list_jobs() -> list[Job]:
     return sorted(JOBS.values(), key=lambda j: j.created_at, reverse=True)
-
-
-@dataclass
-class SynthRun:
-    status: Literal["running", "error"] = "running"
-    error: str | None = None
-
-
-# Process-local, keyed by company_name — one in-flight synthesis run tracked per company so the
-# "Run synthesis" button's spinner/disabled state survives the data panel's 4s poll instead of
-# being wiped out by the next full-panel re-render (the button used to look inert while a
-# multi-minute LLM call ran in the background of a blocking request).
-SYNTH_RUNS: dict[str, SynthRun] = {}
-
-
-def _run_synthesis(company_name: str, settings: Settings) -> None:
-    try:
-        _synthesize_impl(company_name, settings=settings)
-        SYNTH_RUNS.pop(company_name, None)
-    except SynthesisInProgress:
-        # Lost the race to another synthesis run for this company (e.g. the pipeline job's
-        # own synthesize stage) that started between this thread being spawned and acquiring
-        # the lock in _synthesize_impl. That run owns SYNTH_RUNS' "running" state — leave it.
-        pass
-    except Exception as exc:
-        SYNTH_RUNS[company_name] = SynthRun(status="error", error=str(exc))
-
-
-def submit_synthesis(company_name: str, settings: Settings) -> None:
-    SYNTH_RUNS[company_name] = SynthRun(status="running")
-    threading.Thread(
-        target=_run_synthesis, args=(company_name, settings), daemon=True
-    ).start()

@@ -126,25 +126,6 @@
       <h2 class="text-base font-medium">Synthesized docs · {{ selected }}</h2>
       <div class="flex items-center gap-3">
         <span class="text-xs text-slate-400 dark:text-slate-600">{{ docs | length }} doc{{ "s" if docs | length != 1 }} · refreshes every 4s</span>
-        <button
-          type="button"
-          hx-post="/data/synthesize?company={{ selected | urlencode }}&view=synthesis"
-          hx-target="#data-panel-inner"
-          hx-swap="outerHTML"
-          hx-disabled-elt="this"
-          {% if synth_running %}disabled{% endif %}
-          class="inline-flex items-center gap-1.5 rounded-md border border-indigo-200 px-2 py-1 text-xs font-medium text-indigo-600 hover:bg-indigo-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-indigo-500/30 dark:text-indigo-400 dark:hover:bg-indigo-500/10"
-        >
-          {% if synth_running %}
-          <svg class="h-3 w-3 animate-spin" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
-          </svg>
-          Synthesizing…
-          {% else %}
-          Run synthesis
-          {% endif %}
-        </button>
         {% if docs %}
         <button
           type="button"
@@ -159,12 +140,6 @@
         {% endif %}
       </div>
     </div>
-    {% if synth_error %}
-    <div class="mb-3 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-300">
-      <p class="font-medium">Synthesis failed.</p>
-      <p class="mt-1 text-xs text-rose-600/80 dark:text-rose-300/70">{{ synth_error }}</p>
-    </div>
-    {% endif %}
     {% if docs %}
     <div class="flex flex-col gap-3">
       {% for doc in docs %}

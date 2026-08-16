@@ -164,6 +164,42 @@ def synthesize(company_name: str = typer.Option(...)) -> None:
     _synthesize_impl(company_name)
 
 
+def _synthesize_pending_impl(settings: Settings | None = None) -> None:
+    """Freeform mode: run synthesize for every company that has at least one unrouted extracted
+    article. Meant to be invoked on a schedule (see cron/) as a replacement for the dashboard's
+    manual "Run synthesis" button — safe to call repeatedly since run_freeform_synthesis is
+    incremental/idempotent (a company with nothing new to route is a fast no-op, not a full
+    rebuild). Skips a company outright if SynthesisInProgress (e.g. a pipeline job already
+    running for it) rather than failing the whole batch."""
+    settings = settings or Settings()
+    if settings.pipeline_mode != "freeform":
+        typer.echo(
+            f"pipeline_mode={settings.pipeline_mode!r}; synthesize-pending only supports "
+            "freeform mode (structured mode has no per-article routing state to detect "
+            "'pending' from — see Database.list_companies_with_pending_synthesis)"
+        )
+        raise typer.Exit(code=1)
+    with open_db_from_settings(settings) as database:
+        companies = database.list_companies_with_pending_synthesis()
+    if not companies:
+        typer.echo("no companies with pending synthesis")
+        return
+    for company_name in companies:
+        try:
+            _synthesize_impl(company_name, settings=settings)
+        except SynthesisInProgress:
+            typer.echo(f"{company_name}: synthesis already in progress, skipping")
+        except Exception as exc:
+            typer.echo(f"{company_name}: synthesis failed: {exc}")
+
+
+@app.command(name="synthesize-pending")
+def synthesize_pending() -> None:
+    """Freeform mode: run synthesize for every company with unrouted extracted articles.
+    Intended for cron/scheduled invocation (see cron/) instead of the dashboard's manual button."""
+    _synthesize_pending_impl()
+
+
 @app.command()
 def docs(company_name: str = typer.Option(...)) -> None:
     """List synthesized/routed architecture docs stored in ArangoDB for company_name."""

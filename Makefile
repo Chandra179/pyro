@@ -1,4 +1,4 @@
-.PHONY: install test lint run sample-run db-up db-down dashboard dashboard-css dashboard-css-watch
+.PHONY: install test lint run sample-run db-up db-down dashboard dashboard-css dashboard-css-watch synthesize-pending
 
 install:
 	uv sync
@@ -41,3 +41,11 @@ dashboard-css:
 # Rebuild on every template/CSS change while you work on the dashboard UI.
 dashboard-css-watch:
 	cd dashboard && npm run watch:css
+
+# Manually trigger what cron/synthesize_pending.sh runs on a schedule — synthesizes docs for
+# every company with unrouted extracted articles (freeform mode only). Requires db-up. Not run
+# automatically by `dashboard` on purpose: the schedule is meant to be independent of whether the
+# dashboard process is up (see cron/README.md) — register cron/synthesize_pending.sh in crontab
+# for the actual recurring job instead of relying on this target.
+synthesize-pending:
+	uv run pyro synthesize-pending
