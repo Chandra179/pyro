@@ -20,6 +20,15 @@
   .field-control {
     @apply rounded-md border border-slate-300 bg-white px-3 py-2 text-slate-900 outline-none focus:border-indigo-400 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100;
   }
+  /* Native <select> arrows sit flush against the box edge with no reserved
+     space and render inconsistently across browsers. Replace with a fixed
+     inline chevron + right padding so there's breathing room next to it. */
+  select.field-control {
+    @apply appearance-none bg-no-repeat pr-9;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+    background-position: right 0.6rem center;
+    background-size: 1rem;
+  }
   .field-group-label {
     @apply text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-slate-600;
   }

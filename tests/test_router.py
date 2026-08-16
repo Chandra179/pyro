@@ -1,3 +1,5 @@
+import pytest
+
 from pyro.config import Settings
 from pyro.router import (
     build_model_list,
@@ -69,11 +71,8 @@ def test_groq_only_tier_included_when_configured_alone():
 
 def test_build_router_raises_without_any_key():
     settings = Settings(_env_file=None)
-    try:
+    with pytest.raises(RuntimeError, match="OPENROUTER_API_KEY"):
         build_router(settings)
-        assert False, "expected RuntimeError"
-    except RuntimeError as exc:
-        assert "OPENROUTER_API_KEY" in str(exc)
 
 
 def test_build_router_succeeds_with_openrouter_key():

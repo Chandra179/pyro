@@ -32,9 +32,44 @@ cascade degrades gracefully down to whatever provider(s) are available. Order:
 
 from __future__ import annotations
 
+import asyncio
+import logging
+from collections.abc import Awaitable, Callable
+from typing import TypeVar
+
 from litellm import Router
+from litellm.exceptions import RateLimitError
 
 from pyro.config import Settings
+
+logger = logging.getLogger(__name__)
+
+T = TypeVar("T")
+
+
+async def call_with_rate_limit_retry(fn: Callable[[], Awaitable[T]], settings: Settings) -> T:
+    """Retry fn() (one acompletion call) on RateLimitError, waiting router.rate_limit_wait_seconds
+    between attempts. Needed because a provider-level throttle (e.g. TokenRouter's "Maximum 1
+    requests within 1 minutes") can be far tighter than the cascade's own num_retries/cooldown_time,
+    which only governs advancing to the *next* tier — no help when the rate-limited tier is the
+    only one configured."""
+    last_error: RateLimitError | None = None
+    for attempt in range(settings.router.rate_limit_max_retries):
+        try:
+            return await fn()
+        except RateLimitError as exc:
+            last_error = exc
+            if attempt < settings.router.rate_limit_max_retries - 1:
+                logger.warning(
+                    "rate limited (attempt %d/%d) — waiting %ds: %s",
+                    attempt + 1,
+                    settings.router.rate_limit_max_retries,
+                    settings.router.rate_limit_wait_seconds,
+                    exc,
+                )
+                await asyncio.sleep(settings.router.rate_limit_wait_seconds)
+    assert last_error is not None
+    raise last_error
 
 
 def build_model_list(settings: Settings) -> list[dict]:
@@ -88,28 +123,17 @@ def build_model_list(settings: Settings) -> list[dict]:
                 }
             )
 
-    # if settings.tokenrouter_api_key:
-    #     for model_name in settings.router.tokenrouter_free_models:
-    #         model_list.append(
-    #             {
-    #                 "model_name": "extraction-cascade",
-    #                 "litellm_params": {
-    #                     "model": f"openai/{model_name}",
-    #                     "api_base": settings.router.tokenrouter_api_base,
-    #                     "api_key": settings.tokenrouter_api_key,
-    #                 },
-    #             }
-    #         )
-    #     model_list.append(
-    #         {
-    #             "model_name": "extraction-cascade",
-    #             "litellm_params": {
-    #                 "model": f"openai/{settings.router.tokenrouter_model}",
-    #                 "api_base": settings.router.tokenrouter_api_base,
-    #                 "api_key": settings.tokenrouter_api_key,
-    #             },
-    #         }
-    #     )
+    if settings.tokenrouter_api_key:
+        model_list.append(
+            {
+                "model_name": "extraction-cascade",
+                "litellm_params": {
+                    "model": f"openai/{settings.router.tokenrouter_model}",
+                    "api_base": settings.router.tokenrouter_api_base,
+                    "api_key": settings.tokenrouter_api_key,
+                },
+            }
+        )
 
     if settings.openai_api_key:
         model_list.append(

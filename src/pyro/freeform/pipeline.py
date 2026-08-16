@@ -43,17 +43,25 @@ async def run_freeform_extraction(
                 return
             db.mark_extracted(article.id, True, {"summary": summary})
 
-        async with doc_lock:
-            docs_index = build_docs_index(db, company_name)
-            key, content = await route_and_update_doc(
-                docs_index,
-                article.title or article.source_url,
-                summary,
-                company_name,
-                settings,
-                synth_params,
-            )
-            db.upsert_doc(key.removesuffix(".md"), company_name, content, heading=_first_heading(content))
+        route_text = article.cleaned_text if settings.freeform_route_source == "cleaned_text" else summary
+
+        try:
+            async with doc_lock:
+                docs_index = build_docs_index(db, company_name)
+                key, content = await route_and_update_doc(
+                    docs_index,
+                    article.title or article.source_url,
+                    route_text,
+                    company_name,
+                    settings,
+                    synth_params,
+                )
+                db.upsert_doc(key.removesuffix(".md"), company_name, content, heading=_first_heading(content))
+        except Exception:
+            # Article stays marked extracted (its summary is saved) even if routing fails —
+            # a later run can't retry it automatically, but nothing is lost, and one bad
+            # article's routing failure must not take down every other article's gather().
+            logger.exception("freeform routing failed for %s", article.id)
 
     await asyncio.gather(*(_process(a) for a in articles))
     return len(articles)

@@ -53,6 +53,13 @@ class RouterConfig(BaseModel):
     gemini_model: str = "gemini/gemini-2.5-flash"
     openai_model: str = "gpt-4o-mini"
 
+    # Some tiers (e.g. TokenRouter's throttle: "Maximum 1 requests within 1 minutes") are far
+    # tighter than num_retries/cooldown_time above, which only governs advancing to the *next*
+    # cascade tier on failure — no help when the tier that got rate-limited is the only one
+    # configured. This is a separate same-tier retry: wait it out and try again.
+    rate_limit_max_retries: int = 5
+    rate_limit_wait_seconds: int = 65
+
 
 class ScrapeConfig(BaseModel):
     concurrency: int = 5
@@ -153,6 +160,14 @@ class Settings(BaseSettings):
     extraction_rpm_limit: int = 20
     extraction_concurrency: int = 5
 
+    # Decoding controls for extraction calls. Free-tier models are the most prone to
+    # repetition-loop collapse (e.g. a token like "Lorem" repeating indefinitely) — a low
+    # temperature plus a frequency penalty discourages the model from reusing a token it's
+    # already emitted, and max_tokens caps how much damage a collapse can still do.
+    extraction_temperature: float = 0.3
+    extraction_frequency_penalty: float = 0.4
+    extraction_max_tokens: int = 2000
+
     # Chunking for outlier posts.
     chunk_token_threshold: int = 8000
     chunk_overlap_tokens: int = 500
@@ -165,6 +180,11 @@ class Settings(BaseSettings):
     # plain text, and each article is immediately routed into an existing or
     # new topic file instead of a separate batch synthesis pass.
     pipeline_mode: Literal["structured", "freeform"] = "structured"
+
+    # Freeform mode only: what routing/synthesis reads for each article. "summary" (default)
+    # uses the LLM-generated extraction summary; "cleaned_text" skips the summarization step's
+    # output and feeds the article's full cleaned text straight into routing instead.
+    freeform_route_source: Literal["summary", "cleaned_text"] = "summary"
 
     # Synthesis batching.
     synthesis_batch_size: int = 50

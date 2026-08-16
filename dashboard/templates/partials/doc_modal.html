@@ -46,13 +46,13 @@
 </div>
 <div class="flex-1 overflow-y-auto px-6 py-5">
   {#
-    prose's default max-width (65ch) is the deliberate choice here — it's the
-    typographic sweet spot for line length (~65-75 characters) that's
-    comfortable to read, same reasoning as a printed book's column width.
-    Diagrams opt out of it via not-prose (added by the mermaid fence
-    formatter in api/render.py) since a wide SVG isn't running text.
+    max-w-none: the dialog itself already caps reading width (max-w-3xl,
+    expandable to 72rem via .doc-modal--expanded) — prose's own default
+    max-width (65ch) would apply a second, tighter cap on top of that,
+    leaving dead whitespace inside the already-sized modal. Same fix as
+    article_modal.html's cleaned_text block.
   #}
-  <div class="prose prose-sm dark:prose-invert sm:prose-base">
+  <div class="prose prose-sm dark:prose-invert sm:prose-base max-w-none">
     {{ content_html | safe }}
   </div>
 </div>

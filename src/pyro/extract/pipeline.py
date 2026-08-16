@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 
 from json_repair import repair_json
 from litellm import acompletion
@@ -25,9 +26,19 @@ from pyro.extract.prompts import (
     extraction_user_prompt,
 )
 from pyro.extract.schema import DOMAINS, ExtractedFacts, merge_facts
-from pyro.router import concrete_model_params
+from pyro.router import call_with_rate_limit_retry, concrete_model_params
 
 logger = logging.getLogger(__name__)
+
+
+def _decoding_params(settings: Settings) -> dict:
+    """Shared temperature/frequency_penalty/max_tokens for extraction calls — see
+    Settings.extraction_temperature docstring for why these matter against free-tier models."""
+    return {
+        "temperature": settings.extraction_temperature,
+        "frequency_penalty": settings.extraction_frequency_penalty,
+        "max_tokens": settings.extraction_max_tokens,
+    }
 
 
 async def extract_chunk(
@@ -38,24 +49,31 @@ async def extract_chunk(
     system_prompt: str,
     user_template: str,
     domains: list[str] = DOMAINS,
+    decoding_params: dict | None = None,
+    settings: Settings | None = None,
 ) -> ExtractedFacts:
     """Call through the concrete model list, validating each response against the
     Pydantic schema and advancing to the next model on any failure."""
+    settings = settings or Settings()
     last_error: Exception | None = None
     for params in model_params:
         try:
-            response = await acompletion(
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {
-                        "role": "user",
-                        "content": user_template.format(
-                            title=title, url=url, content=content, domains=", ".join(domains)
-                        ),
-                    },
-                ],
-                response_format={"type": "json_object"},
-                **params,
+            response = await call_with_rate_limit_retry(
+                lambda params=params: acompletion(
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {
+                            "role": "user",
+                            "content": user_template.format(
+                                title=title, url=url, content=content, domains=", ".join(domains)
+                            ),
+                        },
+                    ],
+                    response_format={"type": "json_object"},
+                    **(decoding_params or {}),
+                    **params,
+                ),
+                settings,
             )
             raw = response.choices[0].message.content
             parsed = repair_json(raw, return_objects=True)
@@ -81,29 +99,66 @@ async def extract_article(
         token_threshold=settings.chunk_token_threshold,
         overlap_tokens=settings.chunk_overlap_tokens,
     )
+    decoding_params = _decoding_params(settings)
     facts_list = [
-        await extract_chunk(title, url, chunk, model_params, system_prompt, user_template, settings.domains)
+        await extract_chunk(
+            title,
+            url,
+            chunk,
+            model_params,
+            system_prompt,
+            user_template,
+            settings.domains,
+            decoding_params,
+            settings,
+        )
         for chunk in chunks
     ]
     return merge_facts(facts_list, settings.domains)
 
 
+_DEGENERATE_REPEAT_RE = re.compile(r"\b(\w+)\b(?:\s+\1\b){4,}", re.IGNORECASE)
+
+
+def _is_degenerate(text: str) -> bool:
+    """True if some word repeats 5+ times in a row — the decoding-collapse failure mode some
+    free/small models fall into near their output limit (e.g. "Lorem Lorem Lorem ..."). A 200 OK
+    response like this passes schema/exception checks but is garbage, so it needs its own check
+    to trigger the same advance-to-next-model behavior as a provider error."""
+    return bool(_DEGENERATE_REPEAT_RE.search(text))
+
+
 async def extract_freeform_chunk(
-    title: str, url: str, content: str, model_params: list[dict], system_prompt: str, user_template: str
+    title: str,
+    url: str,
+    content: str,
+    model_params: list[dict],
+    system_prompt: str,
+    user_template: str,
+    decoding_params: dict | None = None,
+    settings: Settings | None = None,
 ) -> str:
     """Same model-cascade fallback as extract_chunk, but no schema — returns raw text."""
+    settings = settings or Settings()
     last_error: Exception | None = None
     for params in model_params:
         try:
-            response = await acompletion(
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_template.format(title=title, url=url, content=content)},
-                ],
-                **params,
+            response = await call_with_rate_limit_retry(
+                lambda params=params: acompletion(
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_template.format(title=title, url=url, content=content)},
+                    ],
+                    **(decoding_params or {}),
+                    **params,
+                ),
+                settings,
             )
-            return response.choices[0].message.content
-        except Exception as exc:  # provider-level error (429/503/timeout/etc.)
+            text = response.choices[0].message.content
+            if _is_degenerate(text):
+                raise ValueError("degenerate output (repeated-word collapse)")
+            return text
+        except Exception as exc:  # provider-level error (429/503/timeout/etc.) or degenerate output
             logger.warning("model %s failed: %s", params["model"], exc)
             last_error = exc
 
@@ -115,7 +170,9 @@ async def extract_article_freeform(title: str, url: str, cleaned_text: str, sett
     model_params = concrete_model_params(settings)
     system_prompt = extraction_freeform_system_prompt(settings)
     user_template = extraction_freeform_user_prompt(settings)
-    return await extract_freeform_chunk(title, url, cleaned_text, model_params, system_prompt, user_template)
+    return await extract_freeform_chunk(
+        title, url, cleaned_text, model_params, system_prompt, user_template, _decoding_params(settings), settings
+    )
 
 
 async def run_extraction(db: Database, settings: Settings, limit: int | None = None) -> int:

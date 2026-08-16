@@ -25,8 +25,9 @@ from api.data import (
     get_synthesis,
     list_companies,
 )
-from api.jobs import JOBS, list_jobs, submit_job
+from api.jobs import JOBS, SYNTH_RUNS, list_jobs, submit_job, submit_synthesis
 from api.render import render_markdown
+from pyro.config import Settings
 from pyro.prompts import list_variants
 
 load_dotenv()
@@ -118,7 +119,10 @@ def _data_context(company: str | None, view: str) -> dict:
             "articles": [],
             "docs": [],
             "db_error": str(exc),
+            "synth_running": False,
+            "synth_error": None,
         }
+    synth_run = SYNTH_RUNS.get(selected) if selected else None
     return {
         "companies": companies,
         "selected": selected,
@@ -126,6 +130,8 @@ def _data_context(company: str | None, view: str) -> dict:
         "articles": articles,
         "docs": docs,
         "db_error": None,
+        "synth_running": synth_run is not None and synth_run.status == "running",
+        "synth_error": synth_run.error if synth_run is not None and synth_run.status == "error" else None,
     }
 
 
@@ -193,3 +199,29 @@ def delete_all_docs_route(request: Request, company: str, view: str = "synthesis
     return templates.TemplateResponse(
         request, "partials/data_panel.html", _data_context(company, view)
     )
+
+
+@app.post("/data/synthesize", response_class=HTMLResponse)
+def synthesize_route(request: Request, company: str, view: str = "synthesis") -> HTMLResponse:
+    """Re-run synthesis for company from its already-extracted architectural articles — lets a
+    user regenerate docs after deleting them, without re-scraping/re-extracting from scratch.
+
+    Runs on a background thread (see api.jobs.submit_synthesis) rather than blocking this
+    request: a real LLM synthesis pass can take minutes (chunk batches + rate-limit retries),
+    and the data panel's own 4s auto-refresh would otherwise repeatedly re-render the button as
+    idle mid-request, making a slow-but-working click look like it did nothing.
+    """
+    settings = Settings()
+    if settings.pipeline_mode == "freeform":
+        context = _data_context(company, view)
+        context["synth_error"] = (
+            "pipeline_mode is 'freeform' — docs are updated as part of extraction, not a "
+            "separate synthesis step. Re-run extraction to regenerate them."
+        )
+        return templates.TemplateResponse(request, "partials/data_panel.html", context)
+
+    existing = SYNTH_RUNS.get(company)
+    if existing is None or existing.status != "running":
+        submit_synthesis(company, settings)
+    context = _data_context(company, view)
+    return templates.TemplateResponse(request, "partials/data_panel.html", context)

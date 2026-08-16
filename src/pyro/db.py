@@ -215,11 +215,8 @@ class Database:
         else:
             self._docs.insert(doc)
 
-    def get_doc(self, key: str) -> dict | None:
-        return self._docs.get(key)
-
     def get_doc_for_company(self, company_name: str, key: str) -> dict | None:
-        """Like get_doc, but also checks company ownership — doc keys (e.g.
+        """Checks company ownership — doc keys (e.g.
         "architecture-authentication") are slugs, not globally unique across
         companies, so a bare key lookup could return another company's doc."""
         doc = self._docs.get(key)

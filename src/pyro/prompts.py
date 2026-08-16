@@ -55,7 +55,7 @@ def list_variants(stage: Literal["extraction", "synthesis"], mode: PipelineMode)
 
 def build_prompts_config(
     mode: PipelineMode, extraction_variant: str, synthesis_variant: str
-) -> "PromptsConfig":
+) -> PromptsConfig:
     """Build a PromptsConfig pointing at the given (mode, variant) choice for each stage —
     what the dashboard uses to let a run pick its extraction/synthesis templates independently.
     Only the fields relevant to `mode` are set; the other mode's fields keep their defaults

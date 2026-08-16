@@ -10,7 +10,7 @@ from litellm import acompletion
 
 from pyro.config import Settings
 from pyro.db import Article, Database
-from pyro.router import synthesis_model_params
+from pyro.router import call_with_rate_limit_retry, synthesis_model_params
 from pyro.synth.prompts import (
     batch_synthesis_system_prompt,
     batch_synthesis_user_prompt,
@@ -67,22 +67,26 @@ async def _summarize_batch(
     model_params: dict,
     system_prompt: str,
     user_template: str,
+    settings: Settings,
 ) -> list[dict]:
     facts_json = json.dumps([_article_summary(a) for a in articles], indent=2)
-    response = await acompletion(
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {
-                "role": "user",
-                "content": user_template.format(
-                    article_count=len(articles),
-                    company_name=company_name,
-                    facts_json_data=facts_json,
-                ),
-            },
-        ],
-        response_format={"type": "json_object"},
-        **model_params,
+    response = await call_with_rate_limit_retry(
+        lambda: acompletion(
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {
+                    "role": "user",
+                    "content": user_template.format(
+                        article_count=len(articles),
+                        company_name=company_name,
+                        facts_json_data=facts_json,
+                    ),
+                },
+            ],
+            response_format={"type": "json_object"},
+            **model_params,
+        ),
+        settings,
     )
     return json.loads(response.choices[0].message.content).get("summaries", [])
 
@@ -96,23 +100,27 @@ async def _final_synthesis(
     max_tokens: int,
     system_prompt: str,
     user_template: str,
+    settings: Settings,
 ) -> str:
     facts_json = json.dumps(facts_data, indent=2)
-    response = await acompletion(
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {
-                "role": "user",
-                "content": user_template.format(
-                    total_articles=total_articles,
-                    company_name=company_name,
-                    domain=domain,
-                    facts_json_data=facts_json,
-                ),
-            },
-        ],
-        max_tokens=max_tokens,
-        **model_params,
+    response = await call_with_rate_limit_retry(
+        lambda: acompletion(
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {
+                    "role": "user",
+                    "content": user_template.format(
+                        total_articles=total_articles,
+                        company_name=company_name,
+                        domain=domain,
+                        facts_json_data=facts_json,
+                    ),
+                },
+            ],
+            max_tokens=max_tokens,
+            **model_params,
+        ),
+        settings,
     )
     return _strip_outer_markdown_fence(response.choices[0].message.content)
 
@@ -130,7 +138,7 @@ async def _synthesize_domain(
         for batch in batches:
             facts_data.extend(
                 await _summarize_batch(
-                    batch, company_name, model_params, batch_system_prompt, batch_user_template
+                    batch, company_name, model_params, batch_system_prompt, batch_user_template, settings
                 )
             )
 
@@ -143,6 +151,7 @@ async def _synthesize_domain(
         settings.synthesis_max_tokens,
         synthesis_system_prompt(settings),
         synthesis_user_prompt(settings),
+        settings,
     )
 
 
@@ -187,21 +196,24 @@ async def route_and_update_doc(
 ) -> tuple[str, str]:
     """Freeform mode: decide which topic file this article belongs to (or that it needs a new
     one), and fold it in. Returns (filename, full updated document)."""
-    response = await acompletion(
-        messages=[
-            {"role": "system", "content": freeform_route_system_prompt(settings)},
-            {
-                "role": "user",
-                "content": freeform_route_user_prompt(settings).format(
-                    company_name=company_name,
-                    existing_files_index=existing_files_index,
-                    title=title,
-                    extraction_text=extraction_text,
-                ),
-            },
-        ],
-        max_tokens=settings.synthesis_max_tokens,
-        **model_params,
+    response = await call_with_rate_limit_retry(
+        lambda: acompletion(
+            messages=[
+                {"role": "system", "content": freeform_route_system_prompt(settings)},
+                {
+                    "role": "user",
+                    "content": freeform_route_user_prompt(settings).format(
+                        company_name=company_name,
+                        existing_files_index=existing_files_index,
+                        title=title,
+                        extraction_text=extraction_text,
+                    ),
+                },
+            ],
+            max_tokens=settings.synthesis_max_tokens,
+            **model_params,
+        ),
+        settings,
     )
     filename, content = _parse_routed_response(response.choices[0].message.content)
     stem = slugify(filename.removesuffix(".md").removesuffix(".markdown"))

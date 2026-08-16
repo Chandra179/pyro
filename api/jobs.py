@@ -130,3 +130,29 @@ def submit_job(
 
 def list_jobs() -> list[Job]:
     return sorted(JOBS.values(), key=lambda j: j.created_at, reverse=True)
+
+
+@dataclass
+class SynthRun:
+    status: Literal["running", "error"] = "running"
+    error: str | None = None
+
+
+# Process-local, keyed by company_name — one in-flight synthesis run tracked per company so the
+# "Run synthesis" button's spinner/disabled state survives the data panel's 4s poll instead of
+# being wiped out by the next full-panel re-render (the button used to look inert while a
+# multi-minute LLM call ran in the background of a blocking request).
+SYNTH_RUNS: dict[str, SynthRun] = {}
+
+
+def _run_synthesis(company_name: str, settings: Settings) -> None:
+    try:
+        _synthesize_impl(company_name, settings=settings)
+        SYNTH_RUNS.pop(company_name, None)
+    except Exception as exc:
+        SYNTH_RUNS[company_name] = SynthRun(status="error", error=str(exc))
+
+
+def submit_synthesis(company_name: str, settings: Settings) -> None:
+    SYNTH_RUNS[company_name] = SynthRun(status="running")
+    threading.Thread(target=_run_synthesis, args=(company_name, settings), daemon=True).start()
