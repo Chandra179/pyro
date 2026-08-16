@@ -203,7 +203,7 @@ def delete_all_docs_route(request: Request, company: str, view: str = "synthesis
 
 @app.post("/data/synthesize", response_class=HTMLResponse)
 def synthesize_route(request: Request, company: str, view: str = "synthesis") -> HTMLResponse:
-    """Re-run synthesis for company from its already-extracted architectural articles — lets a
+    """Re-run synthesis for company from its already-extracted articles — lets a
     user regenerate docs after deleting them, without re-scraping/re-extracting from scratch.
 
     Runs on a background thread (see api.jobs.submit_synthesis) rather than blocking this

@@ -41,7 +41,7 @@ async def run_freeform_extraction(
             except Exception:
                 logger.exception("freeform extraction failed for %s", article.id)
                 return
-            db.mark_extracted(article.id, True, {"summary": summary})
+            db.mark_extracted(article.id, {"summary": summary})
 
         route_text = article.cleaned_text if settings.freeform_route_source == "cleaned_text" else summary
 

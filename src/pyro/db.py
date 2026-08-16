@@ -33,7 +33,6 @@ class Article:
     title: str | None = None
     raw_html: str | None = None
     cleaned_text: str | None = None
-    is_architectural: bool | None = None
     extracted_facts: dict[str, Any] | None = None
     scraped_at: str | None = None
     extracted_at: str | None = None
@@ -47,7 +46,6 @@ class Article:
             company_name=doc["company_name"],
             raw_html=doc.get("raw_html"),
             cleaned_text=doc.get("cleaned_text"),
-            is_architectural=doc.get("is_architectural"),
             extracted_facts=doc.get("extracted_facts"),
             scraped_at=doc.get("scraped_at"),
             extracted_at=doc.get("extracted_at"),
@@ -107,7 +105,6 @@ class Database:
                 "company_name": company_name,
                 "raw_html": raw_html,
                 "cleaned_text": None,
-                "is_architectural": None,
                 "extracted_facts": None,
                 "scraped_at": _now(),
                 "extracted_at": None,
@@ -120,13 +117,10 @@ class Database:
     def mark_cleaned(self, id: str, cleaned_text: str) -> None:
         self._articles.update({"_key": id, "cleaned_text": cleaned_text})
 
-    def mark_extracted(
-        self, id: str, is_architectural: bool, extracted_facts: dict[str, Any]
-    ) -> None:
+    def mark_extracted(self, id: str, extracted_facts: dict[str, Any]) -> None:
         self._articles.update(
             {
                 "_key": id,
-                "is_architectural": is_architectural,
                 "extracted_facts": extracted_facts,
                 "extracted_at": _now(),
             }
@@ -146,10 +140,10 @@ class Database:
         cursor = self._db.aql.execute(query)
         return [Article.from_doc(d) for d in cursor]
 
-    def fetch_architectural(self, company_name: str) -> list[Article]:
+    def fetch_extracted(self, company_name: str) -> list[Article]:
         query = f"""
         FOR doc IN {self._articles.name}
-          FILTER doc.company_name == @company_name AND doc.is_architectural == true
+          FILTER doc.company_name == @company_name AND doc.extracted_at != null
           RETURN doc
         """
         cursor = self._db.aql.execute(query, bind_vars={"company_name": company_name})

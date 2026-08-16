@@ -17,7 +17,6 @@ DOMAINS: list[str] = Settings().domains
 
 
 class ExtractedFacts(BaseModel):
-    is_architectural: bool
     domain: str = "Other"
     topic: str = ""
     problem: str = ""
@@ -27,13 +26,11 @@ class ExtractedFacts(BaseModel):
 def merge_facts(facts_list: list[ExtractedFacts], domains: list[str] = DOMAINS) -> ExtractedFacts:
     """Merge per-chunk extraction results for one article."""
     if not facts_list:
-        return ExtractedFacts(is_architectural=False)
+        return ExtractedFacts()
 
-    is_architectural = any(f.is_architectural for f in facts_list)
     domain = next((f.domain for f in facts_list if f.domain in domains), "Other")
 
     return ExtractedFacts(
-        is_architectural=is_architectural,
         domain=domain,
         topic=_join_unique(f.topic for f in facts_list),
         problem=_join_unique(f.problem for f in facts_list),

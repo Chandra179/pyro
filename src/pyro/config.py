@@ -88,6 +88,7 @@ class SitemapConfig(BaseModel):
         "/category/",
         "/categories/",
         "/author/",
+        "/about",
     ]
 
 

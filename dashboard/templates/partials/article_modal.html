@@ -29,8 +29,6 @@
     <dd>{{ article.scraped_at[:19] if article.scraped_at else "—" }}</dd>
     <dt class="font-medium text-slate-400 dark:text-slate-600">Extracted</dt>
     <dd>{{ article.extracted_at[:19] if article.extracted_at else "—" }}</dd>
-    <dt class="font-medium text-slate-400 dark:text-slate-600">Architectural</dt>
-    <dd>{{ "Yes" if article.is_architectural else ("No" if article.is_architectural is not none else "—") }}</dd>
   </dl>
 
   {% if article.extracted_facts %}

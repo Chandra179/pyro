@@ -16,7 +16,6 @@ def _fake_response(content: str):
 
 VALID_JSON = json.dumps(
     {
-        "is_architectural": True,
         "domain": "Authentication",
         "topic": "Zuul API Gateway routes edge traffic.",
         "problem": "The monolith couldn't scale routing decisions.",
@@ -29,7 +28,6 @@ VALID_JSON = json.dumps(
 async def test_first_model_success_no_fallback():
     with patch("pyro.extract.pipeline.acompletion", new=AsyncMock(return_value=_fake_response(VALID_JSON))) as mock_call:
         facts = await extract_chunk("t", "u", "c", [{"model": "model-a"}, {"model": "model-b"}], "sys", "user {title}")
-    assert facts.is_architectural is True
     assert facts.topic == "Zuul API Gateway routes edge traffic."
     assert mock_call.call_count == 1
 
@@ -40,18 +38,18 @@ async def test_falls_back_on_malformed_json():
     mock_call = AsyncMock(side_effect=responses)
     with patch("pyro.extract.pipeline.acompletion", new=mock_call):
         facts = await extract_chunk("t", "u", "c", [{"model": "model-a"}, {"model": "model-b"}], "sys", "user {title}")
-    assert facts.is_architectural is True
+    assert facts.topic == "Zuul API Gateway routes edge traffic."
     assert mock_call.call_count == 2
 
 
 @pytest.mark.asyncio
 async def test_falls_back_on_schema_invalid_json():
-    bad = json.dumps({"topic": 12345})  # missing is_architectural, wrong type
+    bad = json.dumps({"topic": 12345})  # wrong type
     responses = [_fake_response(bad), _fake_response(VALID_JSON)]
     mock_call = AsyncMock(side_effect=responses)
     with patch("pyro.extract.pipeline.acompletion", new=mock_call):
         facts = await extract_chunk("t", "u", "c", [{"model": "model-a"}, {"model": "model-b"}], "sys", "user {title}")
-    assert facts.is_architectural is True
+    assert facts.topic == "Zuul API Gateway routes edge traffic."
     assert mock_call.call_count == 2
 
 
@@ -60,7 +58,7 @@ async def test_repairs_markdown_fenced_json():
     fenced = f"```json\n{VALID_JSON}\n```"
     with patch("pyro.extract.pipeline.acompletion", new=AsyncMock(return_value=_fake_response(fenced))):
         facts = await extract_chunk("t", "u", "c", [{"model": "model-a"}], "sys", "user {title}")
-    assert facts.is_architectural is True
+    assert facts.topic == "Zuul API Gateway routes edge traffic."
 
 
 @pytest.mark.asyncio
@@ -73,14 +71,9 @@ async def test_all_models_fail_raises():
 
 
 def test_merge_facts_joins_unique_parts_across_chunks():
-    f1 = ExtractedFacts(
-        is_architectural=True, domain="Authentication", topic="Zuul routes traffic.", problem="Scaling.", solution=""
-    )
-    f2 = ExtractedFacts(
-        is_architectural=True, domain="Authentication", topic="Zuul routes traffic.", problem="", solution="Dynamic routing."
-    )
+    f1 = ExtractedFacts(domain="Authentication", topic="Zuul routes traffic.", problem="Scaling.", solution="")
+    f2 = ExtractedFacts(domain="Authentication", topic="Zuul routes traffic.", problem="", solution="Dynamic routing.")
     merged = merge_facts([f1, f2])
-    assert merged.is_architectural is True
     assert merged.domain == "Authentication"
     assert merged.topic == "Zuul routes traffic."
     assert merged.problem == "Scaling."
@@ -88,12 +81,11 @@ def test_merge_facts_joins_unique_parts_across_chunks():
 
 
 def test_merge_facts_falls_back_to_other_for_invalid_domain():
-    f1 = ExtractedFacts(is_architectural=True, domain="Bogus", topic="t")
+    f1 = ExtractedFacts(domain="Bogus", topic="t")
     merged = merge_facts([f1])
     assert merged.domain == "Other"
 
 
 def test_merge_facts_empty_list():
     merged = merge_facts([])
-    assert merged.is_architectural is False
     assert merged.topic == ""

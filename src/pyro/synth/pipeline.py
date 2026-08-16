@@ -223,9 +223,9 @@ async def route_and_update_doc(
 async def run_synthesis(db: Database, settings: Settings, company_name: str) -> dict[str, str]:
     """Produce one architecture doc per domain for company_name, persist each as a doc in
     ArangoDB (key "architecture-<domain-slug>"), and return them keyed by domain name."""
-    articles = db.fetch_architectural(company_name)
+    articles = db.fetch_extracted(company_name)
     if not articles:
-        raise RuntimeError(f"no architectural articles found for {company_name!r}")
+        raise RuntimeError(f"no extracted articles found for {company_name!r}")
     if settings.synthesis_article_limit is not None:
         articles = articles[: settings.synthesis_article_limit]
 

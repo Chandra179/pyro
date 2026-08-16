@@ -2,8 +2,7 @@
 {% set stage_variants = {
   "scraped": "neutral",
   "cleaned": "amber",
-  "architectural": "emerald",
-  "filtered": "neutral-muted",
+  "extracted": "emerald",
 } %}
 <div
   id="data-panel-inner"
@@ -55,10 +54,8 @@
         </thead>
         <tbody class="divide-y divide-slate-100 dark:divide-slate-800">
           {% for a in articles %}
-          {% if a.extracted_at and a.is_architectural %}
-            {% set stage, stage_key = "architectural", "architectural" %}
-          {% elif a.extracted_at %}
-            {% set stage, stage_key = "filtered (non-architectural)", "filtered" %}
+          {% if a.extracted_at %}
+            {% set stage, stage_key = "extracted", "extracted" %}
           {% elif a.cleaned_text %}
             {% set stage, stage_key = "cleaned", "cleaned" %}
           {% else %}

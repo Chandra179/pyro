@@ -2,21 +2,14 @@
 # API keys stay out of this file — set them in .env (see .env.example).
 # Any value here can still be overridden per-environment via an env var of the
 # same (upper-cased, flat fields only) name, e.g. EXTRACTION_CONCURRENCY=10.
+#
+# Sections below are grouped by who would change a value and why:
+#   1. Business/product config   — what the pipeline decides (taxonomy, mode, prompts).
+#   2. Temporary dev/test overrides — must be reverted before a real run.
+#   3. System/infra config       — how the pipeline runs (timeouts, concurrency, retries).
 
 # ============================================================================
-# Database
-# ============================================================================
-
-# ArangoDB connection shape (see docker-compose.yml). Credentials
-# (ARANGO_USERNAME/ARANGO_PASSWORD) stay in .env, not here.
-arango:
-  host: "http://localhost:8529"
-  database: "pyro"
-  articles_collection: "articles"
-  docs_collection: "docs"
-
-# ============================================================================
-# Pipeline mode
+# 1. Business / product configuration
 # ============================================================================
 
 # "structured" (default): schema-validated extraction + grouped batch
@@ -29,9 +22,58 @@ pipeline_mode: "structured"
 # that summary and feeds the article's full cleaned text into routing instead.
 freeform_route_source: "cleaned_text"
 
+# Fixed domain taxonomy for extraction classification ("structured" mode
+# only). "Other" is the required fallback for anything that doesn't fit.
+domains:
+  - Authentication
+  - Recommendation Engine
+  - Messaging & Real-Time
+  - Compute Orchestration
+  - Observability
+  - Data Platform
+  - ML/Detection
+  - Media/Content Pipeline
+  - Other
+
+# Prompt template paths, relative to the top-level prompts/ dir. Point any
+# field at a different file to swap that prompt — picked up at runtime, no
+# restart needed.
+prompts:
+  extraction_system: "extraction/structured/default/system.md"
+  extraction_user: "extraction/structured/default/user.md"
+  synthesis_system: "synthesis/structured/default/system.md"
+  synthesis_user: "synthesis/structured/default/user.md"
+  synthesis_batch_system: "synthesis/structured/default/batch_system.md"
+  synthesis_batch_user: "synthesis/structured/default/batch_user.md"
+  extraction_freeform_system: "extraction/freeform/default/system.md"
+  extraction_freeform_user: "extraction/freeform/default/user.md"
+  synthesis_freeform_route_system: "synthesis/freeform/default/route_system.md"
+  synthesis_freeform_route_user: "synthesis/freeform/default/route_user.md"
+
 # ============================================================================
-# Extraction (Pass 1)
+# 2. TEMPORARY dev/test overrides — REVERT before a real/production run
 # ============================================================================
+
+# Both cut cost/latency for cheap local test runs by capping how much
+# synthesis actually does. Remove or raise once the prompts are stable.
+synthesis_batch_size: 2
+synthesis_article_limit: 2
+
+# ============================================================================
+# 3. System / infrastructure configuration
+# ============================================================================
+
+# --- Database ---
+
+# ArangoDB connection shape (see docker-compose.yml). Credentials
+# (ARANGO_USERNAME/ARANGO_PASSWORD) stay in .env, not here.
+arango:
+  host: "http://localhost:8529"
+  database: "pyro"
+  articles_collection: "articles"
+  docs_collection: "docs"
+
+# --- Extraction (Pass 1) ---
 
 # Concurrency, bounded to the active tier's RPM limit. TokenRouter's paid deepseek tier throttles
 # to just 1 request/minute ("Maximum 1 requests within 1 minutes") — concurrency above 1 just
@@ -64,28 +106,8 @@ extraction_max_tokens: 100000
 chunk_token_threshold: 8000
 chunk_overlap_tokens: 500
 
-# Fixed domain taxonomy for extraction classification ("structured" mode
-# only). "Other" is the required fallback for anything that doesn't fit.
-domains:
-  - Authentication
-  - Recommendation Engine
-  - Messaging & Real-Time
-  - Compute Orchestration
-  - Observability
-  - Data Platform
-  - ML/Detection
-  - Media/Content Pipeline
-  - Other
+# --- Synthesis (Pass 2) ---
 
-# ============================================================================
-# Synthesis (Pass 2)
-# ============================================================================
-
-# Batching.
-synthesis_batch_size: 2
-# Temporary cap on total articles fed into synthesis, for cheap test runs.
-# Remove/raise once the prompts are stable.
-synthesis_article_limit: 2
 # Only takes effect when OPENROUTER_API_KEY is set AND this value is
 # "openrouter/"-prefixed (see synthesis_model_params() in router.py) — that's
 # not the current setup (TokenRouter only), so this is inert for now and
@@ -96,28 +118,7 @@ synthesis_model: "deepseek/deepseek-v4-flash-0731"
 # catalog format — give the final pass room to not get cut off.
 synthesis_max_tokens: 16000
 
-# ============================================================================
-# Prompts
-# ============================================================================
-
-# Prompt template paths, relative to the top-level prompts/ dir. Point any
-# field at a different file to swap that prompt — picked up at runtime, no
-# restart needed.
-prompts:
-  extraction_system: "extraction/structured/default/system.md"
-  extraction_user: "extraction/structured/default/user.md"
-  synthesis_system: "synthesis/structured/default/system.md"
-  synthesis_user: "synthesis/structured/default/user.md"
-  synthesis_batch_system: "synthesis/structured/default/batch_system.md"
-  synthesis_batch_user: "synthesis/structured/default/batch_user.md"
-  extraction_freeform_system: "extraction/freeform/default/system.md"
-  extraction_freeform_user: "extraction/freeform/default/user.md"
-  synthesis_freeform_route_system: "synthesis/freeform/default/route_system.md"
-  synthesis_freeform_route_user: "synthesis/freeform/default/route_user.md"
-
-# ============================================================================
-# LLM model cascade
-# ============================================================================
+# --- LLM model cascade ---
 
 # LiteLLM Router cascade (see router.py for tier ordering/rationale).
 router:
@@ -149,9 +150,7 @@ router:
   rate_limit_max_retries: 5
   rate_limit_wait_seconds: 65
 
-# ============================================================================
-# Scraping & cleaning
-# ============================================================================
+# --- Scraping & cleaning ---
 
 # Playwright scraping (raw phase).
 scrape:
@@ -173,7 +172,7 @@ scrape:
 # Sitemap discovery.
 sitemap:
   user_agent: "Mozilla/5.0 (compatible; pyro-blog-crawler/1.0)"
-  # Blog platforms commonly list tag/category/author index pages alongside
+  # Blog platforms commonly list tag/category/author/about pages alongside
   # actual posts in their sitemap — filtered generically, not company-specific.
   non_article_path_segments:
     - "/tagged/"
@@ -181,6 +180,7 @@ sitemap:
     - "/category/"
     - "/categories/"
     - "/author/"
+    - "/about"
 
 # HTML cleaning (boilerplate stripping).
 code_block_line_threshold: 15

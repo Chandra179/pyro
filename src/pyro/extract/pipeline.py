@@ -192,7 +192,7 @@ async def run_extraction(db: Database, settings: Settings, limit: int | None = N
             except Exception:
                 logger.exception("extraction failed for %s", article.id)
                 return
-            db.mark_extracted(article.id, facts.is_architectural, facts.model_dump())
+            db.mark_extracted(article.id, facts.model_dump())
 
     await asyncio.gather(*(_process(a) for a in articles))
     return len(articles)

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from urllib.parse import urlparse
+
 import httpx
 from lxml import etree
 
@@ -15,6 +17,8 @@ _DEFAULT_SITEMAP_CONFIG = SitemapConfig()
 def _is_article_url(
     url: str, non_article_path_segments: list[str] = _DEFAULT_SITEMAP_CONFIG.non_article_path_segments
 ) -> bool:
+    if urlparse(url).path in ("", "/"):
+        return False  # bare site root, not an article
     return not any(segment in url for segment in non_article_path_segments)
 
 
