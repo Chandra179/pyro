@@ -167,6 +167,25 @@ class Database:
         cursor = self._db.aql.execute(query, bind_vars={"company_name": company_name})
         return [Article.from_doc(d) for d in cursor]
 
+    def get_article_for_company(self, company_name: str, article_id: str) -> Article | None:
+        """Like get_doc_for_company: article ids are unique on their own, but this also checks
+        company ownership so one company's dashboard view can't fetch another's article by key."""
+        doc = self._articles.get(article_id)
+        if doc is None or doc.get("company_name") != company_name:
+            return None
+        return Article.from_doc(doc)
+
+    def delete_article(self, article_id: str) -> None:
+        self._articles.delete(article_id, ignore_missing=True)
+
+    def delete_articles_for_company(self, company_name: str) -> None:
+        query = f"""
+        FOR doc IN {self._articles.name}
+          FILTER doc.company_name == @company_name
+          REMOVE doc IN {self._articles.name}
+        """
+        self._db.aql.execute(query, bind_vars={"company_name": company_name})
+
     def list_company_names(self) -> list[str]:
         """Distinct company names seen across both collections, for the dashboard's
         company picker."""
@@ -219,6 +238,17 @@ class Database:
         """
         cursor = self._db.aql.execute(query, bind_vars={"company_name": company_name})
         return list(cursor)
+
+    def delete_doc(self, key: str) -> None:
+        self._docs.delete(key, ignore_missing=True)
+
+    def delete_docs_for_company(self, company_name: str) -> None:
+        query = f"""
+        FOR doc IN {self._docs.name}
+          FILTER doc.company_name == @company_name
+          REMOVE doc IN {self._docs.name}
+        """
+        self._db.aql.execute(query, bind_vars={"company_name": company_name})
 
 
 @contextmanager

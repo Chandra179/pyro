@@ -6,6 +6,25 @@
    inline theme script in base.html (not by prefers-color-scheme alone). */
 @custom-variant dark (&:where(.dark, .dark *));
 
+/* Shared form-control primitives — every text input/select/textarea in the
+   dashboard (run form, data company picker, ...) used to repeat this same
+   utility string verbatim. Defined once here so restyling a control restyles
+   it everywhere, the same way partials/_macros.html centralizes badge
+   styling. Use .field for the <label> wrapper, .field-control for the
+   input/select itself, and .field-group as a small-caps section heading
+   inside a form that groups several fields together. */
+@layer components {
+  .field {
+    @apply flex flex-col gap-1 text-sm text-slate-600 dark:text-slate-300;
+  }
+  .field-control {
+    @apply rounded-md border border-slate-300 bg-white px-3 py-2 text-slate-900 outline-none focus:border-indigo-400 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100;
+  }
+  .field-group-label {
+    @apply text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-slate-600;
+  }
+}
+
 /* Synthesis docs (see api/render.py) render via the `prose` typography
    plugin classes directly in dashboard/templates/partials/doc_modal.html —
    its default max-width: 65ch is exactly the "book" reading-column width

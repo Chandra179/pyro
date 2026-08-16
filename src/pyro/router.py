@@ -88,28 +88,28 @@ def build_model_list(settings: Settings) -> list[dict]:
                 }
             )
 
-    if settings.tokenrouter_api_key:
-        for model_name in settings.router.tokenrouter_free_models:
-            model_list.append(
-                {
-                    "model_name": "extraction-cascade",
-                    "litellm_params": {
-                        "model": f"openai/{model_name}",
-                        "api_base": settings.router.tokenrouter_api_base,
-                        "api_key": settings.tokenrouter_api_key,
-                    },
-                }
-            )
-        model_list.append(
-            {
-                "model_name": "extraction-cascade",
-                "litellm_params": {
-                    "model": f"openai/{settings.router.tokenrouter_model}",
-                    "api_base": settings.router.tokenrouter_api_base,
-                    "api_key": settings.tokenrouter_api_key,
-                },
-            }
-        )
+    # if settings.tokenrouter_api_key:
+    #     for model_name in settings.router.tokenrouter_free_models:
+    #         model_list.append(
+    #             {
+    #                 "model_name": "extraction-cascade",
+    #                 "litellm_params": {
+    #                     "model": f"openai/{model_name}",
+    #                     "api_base": settings.router.tokenrouter_api_base,
+    #                     "api_key": settings.tokenrouter_api_key,
+    #                 },
+    #             }
+    #         )
+    #     model_list.append(
+    #         {
+    #             "model_name": "extraction-cascade",
+    #             "litellm_params": {
+    #                 "model": f"openai/{settings.router.tokenrouter_model}",
+    #                 "api_base": settings.router.tokenrouter_api_base,
+    #                 "api_key": settings.tokenrouter_api_key,
+    #             },
+    #         }
+    #     )
 
     if settings.openai_api_key:
         model_list.append(

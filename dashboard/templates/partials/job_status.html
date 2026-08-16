@@ -1,4 +1,11 @@
 {% from "partials/_macros.html" import badge %}
+{#
+  Deletes the "No runs yet." placeholder (index.html) the first time a job card lands in
+  #recent-runs-list via hx-swap-oob — a no-op once it's already gone, including on every
+  later self-poll of an existing job card, since hx-swap-oob="delete" only acts if a matching
+  id is still in the DOM.
+#}
+<div id="no-runs-placeholder" hx-swap-oob="delete"></div>
 {% set status_variants = {
   "pending": "neutral",
   "scraping": "amber",
@@ -27,6 +34,9 @@
           {{ job.source_kind }}
         </span>
         {% endif %}
+      </p>
+      <p class="mt-1 text-[10px] uppercase tracking-wide text-slate-400 dark:text-slate-600">
+        {{ job.pipeline_mode }} · extraction: {{ job.extraction_variant }} · synthesis: {{ job.synthesis_variant }}
       </p>
     </div>
     {{ badge(job.status_label, status_variants[job.status], pulse=not job.is_finished) }}

@@ -20,8 +20,20 @@
   </head>
   <body class="h-full bg-slate-50 text-slate-900 antialiased dark:bg-slate-950 dark:text-slate-100">
     <div class="flex h-full">
+      {#
+        Below md (768px) the sidebar is an off-canvas panel: fixed and translated fully
+        off-screen by default, slid in by toggleSidebar() (below) swapping the translate-x
+        utility when the header's hamburger button is tapped. At md+ "md:static md:translate-x-0"
+        overrides both, reverting it to the normal in-flow column it always was.
+      #}
+      <div
+        id="sidebar-backdrop"
+        class="fixed inset-0 z-30 hidden bg-slate-900/50 md:hidden"
+        onclick="toggleSidebar(false)"
+      ></div>
       <aside
-        class="flex w-60 shrink-0 flex-col border-r border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900"
+        id="sidebar"
+        class="fixed inset-y-0 left-0 z-40 flex w-60 shrink-0 -translate-x-full flex-col border-r border-slate-200 bg-white transition-transform duration-200 md:static md:translate-x-0 dark:border-slate-800 dark:bg-slate-900"
       >
         <div class="flex items-center gap-2 px-5 py-5">
           <div class="flex h-8 w-8 items-center justify-center rounded-md bg-indigo-500 text-sm font-bold text-white">
@@ -61,21 +73,33 @@
         </div>
       </aside>
 
-      <div class="flex flex-1 flex-col overflow-y-auto">
+      <div class="flex min-w-0 flex-1 flex-col overflow-y-auto">
         <header
-          class="flex items-center justify-between border-b border-slate-200 px-8 py-4 dark:border-slate-800"
+          class="flex items-center justify-between gap-4 border-b border-slate-200 px-4 py-4 sm:px-8 dark:border-slate-800"
         >
-          <div>
-            <h1 class="text-lg font-semibold">{% block page_title %}Runs{% endblock %}</h1>
-            <p class="text-sm text-slate-500 dark:text-slate-400">
-              {% block page_subtitle %}Engineering blog architecture extraction{% endblock %}
-            </p>
+          <div class="flex min-w-0 items-center gap-3">
+            <button
+              id="sidebar-toggle"
+              type="button"
+              aria-label="Toggle navigation"
+              class="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-slate-200 text-slate-500 hover:bg-slate-100 md:hidden dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+            >
+              <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5M3.75 17.25h16.5" />
+              </svg>
+            </button>
+            <div class="min-w-0">
+              <h1 class="truncate text-lg font-semibold">{% block page_title %}Runs{% endblock %}</h1>
+              <p class="truncate text-sm text-slate-500 dark:text-slate-400">
+                {% block page_subtitle %}Engineering blog architecture extraction{% endblock %}
+              </p>
+            </div>
           </div>
           <button
             id="theme-toggle"
             type="button"
             aria-label="Toggle dark mode"
-            class="flex h-9 w-9 items-center justify-center rounded-md border border-slate-200 text-slate-500 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+            class="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-slate-200 text-slate-500 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
           >
             <svg id="icon-sun" class="hidden h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
               <path stroke-linecap="round" stroke-linejoin="round" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
@@ -85,9 +109,26 @@
             </svg>
           </button>
         </header>
-        <main class="flex-1 px-8 py-6">{% block content %}{% endblock %}</main>
+        <main class="flex-1 px-4 py-6 sm:px-8">{% block content %}{% endblock %}</main>
       </div>
     </div>
+
+    <script>
+      // Off-canvas sidebar (below md/768px) — toggled by the header hamburger button and
+      // closed by tapping the backdrop or navigating (the nav links do a full page load, so
+      // no explicit close-on-navigate handler is needed).
+      function toggleSidebar(open) {
+        var sidebar = document.getElementById("sidebar");
+        var backdrop = document.getElementById("sidebar-backdrop");
+        var isOpen = open !== undefined ? open : sidebar.classList.contains("-translate-x-full");
+        sidebar.classList.toggle("-translate-x-full", !isOpen);
+        sidebar.classList.toggle("translate-x-0", isOpen);
+        backdrop.classList.toggle("hidden", !isOpen);
+      }
+      document.getElementById("sidebar-toggle").addEventListener("click", function () {
+        toggleSidebar();
+      });
+    </script>
 
     <script>
       (function () {

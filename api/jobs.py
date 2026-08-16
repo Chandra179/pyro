@@ -19,6 +19,7 @@ from typing import Literal
 from pyro.cli import _clean_impl, _extract_impl, _synthesize_impl
 from pyro.config import Settings
 from pyro.db import open_db_from_settings
+from pyro.prompts import PipelineMode, build_prompts_config
 from pyro.scrape.fetch import scrape_urls
 from pyro.scrape.sitemap import fetch_sitemap_urls
 
@@ -41,6 +42,9 @@ class Job:
     company_name: str
     url: str
     limit: int | None
+    pipeline_mode: PipelineMode
+    extraction_variant: str
+    synthesis_variant: str
     status: JobStatus = "pending"
     error: str | None = None
     # "sitemap" (a whole blog crawled from its sitemap.xml) or "article" (a
@@ -76,7 +80,10 @@ async def _resolve_urls(url: str, settings: Settings) -> tuple[list[str], Litera
 
 
 def _run_job(job: Job) -> None:
-    settings = Settings()
+    settings = Settings(
+        pipeline_mode=job.pipeline_mode,
+        prompts=build_prompts_config(job.pipeline_mode, job.extraction_variant, job.synthesis_variant),
+    )
     try:
         job.status = "scraping"
         urls, source_kind = asyncio.run(_resolve_urls(job.url, settings))
@@ -99,8 +106,23 @@ def _run_job(job: Job) -> None:
         job.error = str(exc)
 
 
-def submit_job(company_name: str, url: str, limit: int | None) -> Job:
-    job = Job(id=str(uuid.uuid4()), company_name=company_name, url=url, limit=limit)
+def submit_job(
+    company_name: str,
+    url: str,
+    limit: int | None,
+    pipeline_mode: PipelineMode,
+    extraction_variant: str,
+    synthesis_variant: str,
+) -> Job:
+    job = Job(
+        id=str(uuid.uuid4()),
+        company_name=company_name,
+        url=url,
+        limit=limit,
+        pipeline_mode=pipeline_mode,
+        extraction_variant=extraction_variant,
+        synthesis_variant=synthesis_variant,
+    )
     JOBS[job.id] = job
     threading.Thread(target=_run_job, args=(job,), daemon=True).start()
     return job

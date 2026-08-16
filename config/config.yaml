@@ -43,16 +43,16 @@ synthesis_max_tokens: 16000
 # field at a different file to swap that prompt — picked up at runtime, no
 # restart needed.
 prompts:
-  extraction_system: "extraction/system.md"
-  extraction_user: "extraction/user.md"
-  synthesis_system: "synthesis/system.md"
-  synthesis_user: "synthesis/user.md"
-  synthesis_batch_system: "synthesis/batch_system.md"
-  synthesis_batch_user: "synthesis/batch_user.md"
-  extraction_freeform_system: "extraction/freeform_system.md"
-  extraction_freeform_user: "extraction/freeform_user.md"
-  synthesis_freeform_route_system: "synthesis/freeform_route_system.md"
-  synthesis_freeform_route_user: "synthesis/freeform_route_user.md"
+  extraction_system: "extraction/structured/default/system.md"
+  extraction_user: "extraction/structured/default/user.md"
+  synthesis_system: "synthesis/structured/default/system.md"
+  synthesis_user: "synthesis/structured/default/user.md"
+  synthesis_batch_system: "synthesis/structured/default/batch_system.md"
+  synthesis_batch_user: "synthesis/structured/default/batch_user.md"
+  extraction_freeform_system: "extraction/freeform/default/system.md"
+  extraction_freeform_user: "extraction/freeform/default/user.md"
+  synthesis_freeform_route_system: "synthesis/freeform/default/route_system.md"
+  synthesis_freeform_route_user: "synthesis/freeform/default/route_user.md"
 
 # Fixed domain taxonomy so classification stays consistent across articles
 # instead of the LLM inventing free-form labels per call. "Other" is the

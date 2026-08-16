@@ -1,0 +1,45 @@
+{#
+  Swapped into #doc-modal-body (see partials/data_shell.html) when an extraction table row's
+  View button is clicked — reuses the same modal shell as the synthesis doc viewer since it's
+  the same "inspect one record" interaction, just over the articles collection instead of docs.
+#}
+<div class="flex shrink-0 items-center justify-between gap-4 border-b border-slate-200 px-6 py-4 dark:border-slate-800">
+  <div class="min-w-0">
+    <h3 class="truncate text-base font-semibold">{{ article.title or "(untitled)" }}</h3>
+    <a href="{{ article.source_url }}" target="_blank" rel="noopener" class="block truncate text-xs text-slate-400 hover:text-indigo-500 dark:text-slate-500">
+      {{ article.source_url }}
+    </a>
+  </div>
+  <div class="flex shrink-0 items-center gap-2">
+    <button
+      type="button"
+      onclick="document.getElementById('doc-modal').close()"
+      aria-label="Close"
+      class="rounded-md p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+    >
+      <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+      </svg>
+    </button>
+  </div>
+</div>
+<div class="flex-1 overflow-y-auto px-6 py-5">
+  <dl class="grid grid-cols-2 gap-x-6 gap-y-2 text-xs text-slate-500 dark:text-slate-400">
+    <dt class="font-medium text-slate-400 dark:text-slate-600">Scraped</dt>
+    <dd>{{ article.scraped_at[:19] if article.scraped_at else "—" }}</dd>
+    <dt class="font-medium text-slate-400 dark:text-slate-600">Extracted</dt>
+    <dd>{{ article.extracted_at[:19] if article.extracted_at else "—" }}</dd>
+    <dt class="font-medium text-slate-400 dark:text-slate-600">Architectural</dt>
+    <dd>{{ "Yes" if article.is_architectural else ("No" if article.is_architectural is not none else "—") }}</dd>
+  </dl>
+
+  {% if article.extracted_facts %}
+  <h4 class="mt-5 mb-2 text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-slate-600">Extracted facts</h4>
+  <pre class="overflow-x-auto rounded-lg bg-slate-50 p-4 text-xs text-slate-700 dark:bg-slate-950 dark:text-slate-300">{{ article.extracted_facts | tojson(indent=2) }}</pre>
+  {% endif %}
+
+  {% if article.cleaned_text %}
+  <h4 class="mt-5 mb-2 text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-slate-600">Cleaned text</h4>
+  <div class="prose prose-sm dark:prose-invert max-w-none whitespace-pre-wrap rounded-lg bg-slate-50 p-4 text-slate-700 dark:bg-slate-950 dark:text-slate-300">{{ article.cleaned_text }}</div>
+  {% endif %}
+</div>

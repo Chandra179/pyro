@@ -87,23 +87,29 @@ class SitemapConfig(BaseModel):
 class PromptsConfig(BaseModel):
     """Paths (relative to the top-level prompts/ dir) for each stage's templates.
 
-    Swap in an alternate prompt by pointing a field at a different file — no
-    code change needed, and picked up at runtime (see pyro.prompts.load_prompt).
+    Each stage's prompts live under prompts/<stage>/<mode>/<variant>/, e.g.
+    prompts/extraction/structured/default/system.md. "variant" is an arbitrary,
+    growable set of alternate prompt styles for that stage+mode (see
+    pyro.prompts.list_variants) — swap in an alternate one by pointing these
+    fields at a different variant dir, no code change needed, and picked up at
+    runtime (see pyro.prompts.load_prompt). build_prompts_config() constructs
+    this from a (mode, extraction_variant, synthesis_variant) choice, which is
+    what the dashboard uses to let a run pick its templates.
     """
 
-    extraction_system: str = "extraction/system.md"
-    extraction_user: str = "extraction/user.md"
-    synthesis_system: str = "synthesis/system.md"
-    synthesis_user: str = "synthesis/user.md"
-    synthesis_batch_system: str = "synthesis/batch_system.md"
-    synthesis_batch_user: str = "synthesis/batch_user.md"
+    extraction_system: str = "extraction/structured/default/system.md"
+    extraction_user: str = "extraction/structured/default/user.md"
+    synthesis_system: str = "synthesis/structured/default/system.md"
+    synthesis_user: str = "synthesis/structured/default/user.md"
+    synthesis_batch_system: str = "synthesis/structured/default/batch_system.md"
+    synthesis_batch_user: str = "synthesis/structured/default/batch_user.md"
 
     # "freeform" mode: no schema, no domain grouping (see pipeline_mode below).
-    extraction_freeform_system: str = "extraction/freeform_system.md"
-    extraction_freeform_user: str = "extraction/freeform_user.md"
+    extraction_freeform_system: str = "extraction/freeform/default/system.md"
+    extraction_freeform_user: str = "extraction/freeform/default/user.md"
     # Routes each article to an existing topic file (update) or a new one (create).
-    synthesis_freeform_route_system: str = "synthesis/freeform_route_system.md"
-    synthesis_freeform_route_user: str = "synthesis/freeform_route_user.md"
+    synthesis_freeform_route_system: str = "synthesis/freeform/default/route_system.md"
+    synthesis_freeform_route_user: str = "synthesis/freeform/default/route_user.md"
 
 
 class ArangoConfig(BaseModel):
