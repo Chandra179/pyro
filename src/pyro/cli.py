@@ -10,8 +10,13 @@ from dotenv import load_dotenv
 
 from pyro.clean.clean import clean_html
 from pyro.config import Settings
-from pyro.db import open_db_from_settings
+from pyro.db import (
+    connection_params_from_settings,
+    migrate_relationships_to_edges,
+    open_db_from_settings,
+)
 from pyro.extract.pipeline import run_extraction
+from pyro.graph.backfill import canonicalize_relations
 from pyro.graph.merge import GraphReporter, run_graph_merge
 from pyro.scrape.fetch import scrape_urls
 from pyro.scrape.sitemap import fetch_sitemap_urls
@@ -69,11 +74,19 @@ def scrape(
     _scrape_impl(company_name, sitemap_url, concurrency=concurrency, limit=limit)
 
 
-def _clean_impl(limit: int | None = None, settings: Settings | None = None) -> None:
-    """Strip boilerplate and collapse code blocks for all un-cleaned articles."""
+def _clean_impl(
+    limit: int | None = None,
+    settings: Settings | None = None,
+    company_name: str | None = None,
+) -> None:
+    """Strip boilerplate and collapse code blocks for un-cleaned articles. Scoped to
+    `company_name` when given — callers running one company's pipeline should pass it so
+    concurrent runs don't consume each other's articles."""
     settings = settings or Settings()
     with open_db_from_settings(settings) as database:
-        articles = database.fetch_unprocessed("clean", limit=limit)
+        articles = database.fetch_unprocessed(
+            "clean", limit=limit, company_name=company_name
+        )
         for article in articles:
             cleaned = clean_html(
                 article.raw_html, settings.code_block_line_threshold, settings.clean
@@ -83,24 +96,36 @@ def _clean_impl(limit: int | None = None, settings: Settings | None = None) -> N
 
 
 @app.command()
-def clean(limit: int | None = typer.Option(None)) -> None:
-    """Strip boilerplate and collapse code blocks for all un-cleaned articles."""
-    _clean_impl(limit=limit)
+def clean(
+    limit: int | None = typer.Option(None),
+    company_name: str | None = typer.Option(None, help="Limit to one company's articles"),
+) -> None:
+    """Strip boilerplate and collapse code blocks for un-cleaned articles."""
+    _clean_impl(limit=limit, company_name=company_name)
 
 
-def _extract_impl(limit: int | None = None, settings: Settings | None = None) -> None:
-    """Run LLM extraction (entity/relationship graph) on all cleaned, unextracted articles
-    (extraction itself isn't scoped to a company — see the 'merge-graph' step, which is)."""
+def _extract_impl(
+    limit: int | None = None,
+    settings: Settings | None = None,
+    company_name: str | None = None,
+) -> None:
+    """Run LLM extraction (entity/relationship graph) on cleaned, unextracted articles, optionally
+    scoped to one company."""
     settings = settings or Settings()
     with open_db_from_settings(settings) as database:
-        count = asyncio.run(run_extraction(database, settings, limit=limit))
+        count = asyncio.run(
+            run_extraction(database, settings, limit=limit, company_name=company_name)
+        )
     typer.echo(f"extracted {count} articles")
 
 
 @app.command()
-def extract(limit: int | None = typer.Option(None)) -> None:
-    """Run LLM extraction on all cleaned, unextracted articles."""
-    _extract_impl(limit=limit)
+def extract(
+    limit: int | None = typer.Option(None),
+    company_name: str | None = typer.Option(None, help="Limit to one company's articles"),
+) -> None:
+    """Run LLM extraction on cleaned, unextracted articles."""
+    _extract_impl(limit=limit, company_name=company_name)
 
 
 class GraphMergeInProgress(Exception):
@@ -194,6 +219,36 @@ def graph(company_name: str = typer.Option(...)) -> None:
         typer.echo(f"{rel['source']} --{rel['relation']}--> {rel['target']}{suffix}")
 
 
+@app.command(name="canonicalize-relations")
+def canonicalize_relations_cmd(
+    company_name: str | None = typer.Option(
+        None, help="Defaults to every company in the graph"
+    ),
+) -> None:
+    """One-off: rewrite already-stored edges onto the controlled relation vocabulary, collapsing
+    synonym duplicates ("sends requests to" / "calls") into single edges. Only needed for graphs
+    merged before the vocabulary existed — new extractions are canonical already."""
+    settings = Settings()
+    with open_db_from_settings(settings) as database:
+        companies = [company_name] if company_name else database.list_company_names()
+        for name in companies:
+            result = canonicalize_relations(database, name)
+            typer.echo(
+                f"{name}: rewrote {result['rewritten']}/{result['examined']} relations "
+                f"({result['collapsed']} duplicate edges collapsed)"
+            )
+
+
+@app.command(name="migrate-relationships")
+def migrate_relationships() -> None:
+    """One-off: convert a pre-existing document-collection `relationships` into an ArangoDB edge
+    collection, so the stored graph can be traversed in AQL. Preserves every edge, and is a no-op
+    once it has run. Only needed for databases created before relationships became edges."""
+    settings = Settings()
+    count = migrate_relationships_to_edges(connection_params_from_settings(settings))
+    typer.echo(f"migrated {count} relationships to edges")
+
+
 def _run_all_impl(
     company_name: str,
     sitemap_url: str,
@@ -209,8 +264,8 @@ def _run_all_impl(
         limit=limit,
         settings=settings,
     )
-    _clean_impl(settings=settings)
-    _extract_impl(settings=settings)
+    _clean_impl(settings=settings, company_name=company_name)
+    _extract_impl(settings=settings, company_name=company_name)
     _merge_graph_impl(company_name, settings=settings)
 
 

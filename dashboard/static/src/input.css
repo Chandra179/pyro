@@ -34,6 +34,27 @@
   }
 }
 
+/* The merge-history block is rendered for the whole life of a running job so the SSE container
+   exists before the first call arrives (see partials/job_status.html). Keep it out of the way
+   until it actually has a card in it. */
+.graph-history:has(> .graph-history-list:empty) {
+  display: none;
+}
+
+/* A streaming call's error slot exists before there is an error to put in it (see
+   partials/graph_call.html) — most calls never fill it. */
+.call-error:empty {
+  display: none;
+}
+
+/* A merge call's "thinking" disclosure is rendered up front while streaming (the element must
+   exist before its sse-swap target can receive anything), but most models emit no reasoning at
+   all. Hide it until its <pre> actually has content, so those calls don't show an empty
+   disclosure. See dashboard/templates/partials/graph_call.html. */
+details:has(> pre:empty) {
+  display: none;
+}
+
 /* The graph view's diagram (dashboard/templates/partials/data_panel.html) renders via
    api/render.py's render_mermaid, the same `<pre class="mermaid">` markup the old doc-modal
    used — centered and horizontally scrollable for whole-company diagrams wider than the

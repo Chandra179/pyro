@@ -2,11 +2,15 @@
 output) get folded into company_name's company-wide entity graph, replacing the old prose
 synthesis stage (docs/architecture.md, "The layers" — Graph merge).
 
-The one LLM call per article shows the model a flat list of the company's existing entity
-*names* (cheap — see Database.list_entity_names) plus this article's own extracted entities, and
-asks it to decide, per entity, whether it's the same system as an existing one (reuse that exact
-name) or new (keep the article's own name). That resolution is the only thing the merge prompt
-decides — kind/domain/relationships all come straight from extraction, unchanged.
+Resolution runs in two tiers. A deterministic pass (graph/resolve.py) matches this article's
+entity names against the company's existing ones by exact and fuzzy string match; only the names
+it can't settle reach the LLM, which is shown those unresolved entities plus the existing names
+most similar to them, and asked to decide per entity whether it's the same system as an existing
+one (reuse that exact name) or new (keep the article's own name). An article whose entities all
+resolve deterministically costs no model call at all.
+
+That resolution is the only thing the merge prompt decides — kind/domain/relationships all come
+straight from extraction, unchanged.
 """
 
 from __future__ import annotations
@@ -17,13 +21,28 @@ from dataclasses import dataclass, field
 
 from json_repair import repair_json
 from litellm import acompletion
+from pydantic import BaseModel, ValidationError
 
 from pyro.config import Settings
 from pyro.db import Article, Database
 from pyro.graph.prompts import merge_system_prompt, merge_user_prompt
+from pyro.graph.resolve import candidate_names, resolve_known_names
 from pyro.router import graph_model_params, stream_with_rate_limit_retry
 
 logger = logging.getLogger(__name__)
+
+
+class ResolvedName(BaseModel):
+    article_name: str
+    canonical_name: str
+
+
+class ResolutionResponse(BaseModel):
+    """The merge call's expected JSON shape. Modelled rather than dict-walked so a malformed
+    response fails in one place with a useful error, matching how extract/schema.py already
+    validates the extraction call's output."""
+
+    resolved: list[ResolvedName] = []
 
 
 class GraphReporter:
@@ -53,19 +72,25 @@ class GraphMergeContext:
 
 
 async def _resolve_names(
+    unresolved: list[str],
     article_entities: list[dict],
     existing_names: list[str],
     article_title: str,
     ctx: GraphMergeContext,
 ) -> dict[str, str]:
-    """One LLM call: returns {article_entity_name: canonical_name} for every entity this
-    article extracted."""
+    """One LLM call for the entities the deterministic pass couldn't settle: returns
+    {article_entity_name: canonical_name} for each."""
     model_params = {**ctx.model_params, "max_tokens": ctx.settings.graph_max_tokens}
     ctx.reporter.start_call(label=article_title, model=model_params["model"])
+    kinds = {e["name"]: e for e in article_entities}
     entities_json = json.dumps(
         [
-            {"name": e["name"], "kind": e.get("kind"), "domain": e.get("domain")}
-            for e in article_entities
+            {
+                "name": name,
+                "kind": kinds.get(name, {}).get("kind"),
+                "domain": kinds.get(name, {}).get("domain"),
+            }
+            for name in unresolved
         ],
         indent=2,
     )
@@ -97,14 +122,22 @@ async def _resolve_names(
         raise
     ctx.reporter.end_call()
 
-    parsed = repair_json(raw, return_objects=True)
-    mapping: dict[str, str] = {}
-    for item in parsed.get("resolved", []) if isinstance(parsed, dict) else []:
-        article_name = (item.get("article_name") or "").strip()
-        canonical_name = (item.get("canonical_name") or "").strip()
-        if article_name and canonical_name:
-            mapping[article_name] = canonical_name
-    return mapping
+    try:
+        parsed = ResolutionResponse.model_validate(
+            repair_json(raw, return_objects=True)
+        )
+    except ValidationError:
+        # A malformed merge response must not abort the run: leaving the mapping empty means every
+        # unresolved entity keeps the article's own name, i.e. is treated as new. That over-counts
+        # entities rather than corrupting existing ones, and a later re-merge can still fold them.
+        logger.warning("merge response failed validation for %r; treating all as new", article_title)
+        return {}
+
+    return {
+        item.article_name.strip(): item.canonical_name.strip()
+        for item in parsed.resolved
+        if item.article_name.strip() and item.canonical_name.strip()
+    }
 
 
 async def _merge_article(db: Database, article: Article, ctx: GraphMergeContext) -> None:
@@ -116,9 +149,30 @@ async def _merge_article(db: Database, article: Article, ctx: GraphMergeContext)
         return
 
     existing_names = db.list_entity_names(ctx.company_name)
-    mapping = await _resolve_names(
-        entities, existing_names, article.title or article.source_url, ctx
+    mapping, unresolved = resolve_known_names(
+        [e["name"] for e in entities],
+        existing_names,
+        threshold=ctx.settings.graph_fuzzy_threshold,
     )
+    if unresolved:
+        llm_mapping = await _resolve_names(
+            unresolved,
+            entities,
+            candidate_names(
+                unresolved, existing_names, limit=ctx.settings.graph_candidate_names_limit
+            ),
+            article.title or article.source_url,
+            ctx,
+        )
+        # Deterministic matches win: they are exact/near-exact string evidence, and letting the
+        # model reassign a name it was never asked about would silently undo them.
+        mapping = {**llm_mapping, **mapping}
+    else:
+        logger.debug(
+            "all %d entities resolved deterministically for %s; skipping merge call",
+            len(entities),
+            article.id,
+        )
 
     for entity in entities:
         name = entity["name"]
@@ -140,6 +194,7 @@ async def _merge_article(db: Database, article: Article, ctx: GraphMergeContext)
             rel["relation"],
             rel.get("as_of"),
             source_article_id=article.id,
+            relation_phrase=rel.get("relation_phrase"),
         )
 
     db.mark_graph_merged(article.id)

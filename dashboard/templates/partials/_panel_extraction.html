@@ -1,0 +1,109 @@
+{#
+  Extraction view: every article for the selected company and where it sits in the pipeline.
+  Rendered inside partials/data_panel.html, which owns the 4s poll wrapper and the error/empty
+  states — this file assumes `selected` is set and the database read succeeded.
+#}
+{% from "partials/_macros.html" import badge %}
+{% set stage_variants = {
+  "scraped": "neutral",
+  "cleaned": "amber",
+  "extracted": "emerald",
+} %}
+<div class="mb-3 flex items-center justify-between">
+  <h2 class="text-base font-medium">Extraction pipeline · {{ selected }}</h2>
+  <div class="flex items-center gap-3">
+    <span class="text-xs text-slate-400 dark:text-slate-600">{{ articles | length }} article{{ "s" if articles | length != 1 }} · refreshes every 4s</span>
+    {% if articles %}
+    <button
+      type="button"
+      hx-delete="/data/articles?company={{ selected | urlencode }}&view=extraction"
+      hx-target="#data-panel-inner"
+      hx-swap="outerHTML"
+      hx-confirm="Delete all {{ articles | length }} extracted article{{ "s" if articles | length != 1 }} for {{ selected }}? This cannot be undone."
+      class="rounded-md border border-rose-200 px-2 py-1 text-xs font-medium text-rose-600 hover:bg-rose-50 dark:border-rose-500/30 dark:text-rose-400 dark:hover:bg-rose-500/10"
+    >
+      Delete all
+    </button>
+    {% endif %}
+  </div>
+</div>
+{% if articles %}
+<div class="overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-800">
+  <table class="w-full min-w-[760px] text-left text-sm">
+    <thead class="bg-slate-50 text-xs uppercase tracking-wide text-slate-500 dark:bg-slate-900 dark:text-slate-400">
+      <tr>
+        <th class="px-4 py-2 font-medium">Title / URL</th>
+        <th class="px-4 py-2 font-medium">Status</th>
+        <th class="px-4 py-2 font-medium">Entities</th>
+        <th class="px-4 py-2 font-medium">Scraped</th>
+        <th class="px-4 py-2 font-medium">Actions</th>
+      </tr>
+    </thead>
+    <tbody class="divide-y divide-slate-100 dark:divide-slate-800">
+      {% for a in articles %}
+      {% if a.extracted_at %}
+        {% set stage = "extracted" %}
+      {% elif a.cleaned_text %}
+        {% set stage = "cleaned" %}
+      {% else %}
+        {% set stage = "scraped" %}
+      {% endif %}
+      <tr class="bg-white dark:bg-slate-900/60">
+        <td class="max-w-xs px-4 py-2">
+          <p class="truncate font-medium">{{ a.title or "(untitled)" }}</p>
+          <a href="{{ a.source_url }}" target="_blank" rel="noopener" class="block truncate text-xs text-slate-400 hover:text-indigo-500 dark:text-slate-500">
+            {{ a.source_url }}
+          </a>
+        </td>
+        <td class="px-4 py-2">
+          {{ badge(stage, stage_variants[stage]) }}
+        </td>
+        <td class="px-4 py-2 text-xs text-slate-500 dark:text-slate-400">
+          {% if a.extracted_graph %}
+            {{ a.extracted_graph.entities | length }} entit{{ "y" if a.extracted_graph.entities | length == 1 else "ies" }}
+          {% else %}
+            —
+          {% endif %}
+        </td>
+        <td class="px-4 py-2 text-xs text-slate-400 dark:text-slate-500">{{ a.scraped_at[:19] if a.scraped_at else "—" }}</td>
+        <td class="px-4 py-2">
+          <div class="flex items-center gap-1">
+            <button
+              type="button"
+              hx-get="/data/article/{{ a.id | urlencode }}?company={{ selected | urlencode }}"
+              hx-target="#preview-modal-body"
+              hx-swap="innerHTML"
+              onclick="document.getElementById('preview-modal').showModal()"
+              aria-label="View"
+              title="View"
+              class="rounded-md p-1.5 text-slate-400 hover:bg-slate-100 hover:text-indigo-600 dark:hover:bg-slate-800 dark:hover:text-indigo-400"
+            >
+              <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" />
+                <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+              </svg>
+            </button>
+            <button
+              type="button"
+              hx-delete="/data/article/{{ a.id | urlencode }}?company={{ selected | urlencode }}&view=extraction"
+              hx-target="#data-panel-inner"
+              hx-swap="outerHTML"
+              hx-confirm="Delete '{{ a.title or a.id }}'? This cannot be undone."
+              aria-label="Delete"
+              title="Delete"
+              class="rounded-md p-1.5 text-slate-400 hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-500/10 dark:hover:text-rose-400"
+            >
+              <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
+              </svg>
+            </button>
+          </div>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<p class="text-sm text-slate-500 dark:text-slate-500">No articles scraped yet for {{ selected }}.</p>
+{% endif %}

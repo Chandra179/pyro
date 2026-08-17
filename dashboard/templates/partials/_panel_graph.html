@@ -1,0 +1,45 @@
+{#
+  Graph view: the selected company's whole entity graph as one mermaid diagram (built server-side
+  by api/graph_view.py). Rendered inside partials/data_panel.html, which owns the error/empty
+  states — this file assumes `selected` is set and the database read succeeded.
+#}
+<div class="mb-3 flex items-center justify-between">
+  <h2 class="text-base font-medium">Entity graph · {{ selected }}</h2>
+  <div class="flex items-center gap-3">
+    <span class="text-xs text-slate-400 dark:text-slate-600">
+      {{ graph.entities | length }} entit{{ "y" if graph.entities | length == 1 else "ies" }} ·
+      {{ graph.relationships | length }} relationship{{ "s" if graph.relationships | length != 1 }}
+    </span>
+    {# A plain navigation rather than an htmx swap: mermaid.render() reliably resolves when driven
+       from a full page load (proven — see git history), but an await-then-attach sequence kicked
+       off from inside an htmx:afterSwap handler was observed to hang indefinitely
+       (mermaid.render()'s promise never settling) for reasons that didn't reproduce when called
+       directly. A full reload sidesteps that without depending on understanding the exact
+       interaction. #}
+    <a
+      href="/data?company={{ selected | urlencode }}&view=graph"
+      class="rounded-md border border-slate-200 px-2 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-800 dark:text-slate-300 dark:hover:bg-slate-800"
+    >
+      Refresh
+    </a>
+    {% if graph.entities %}
+    <button
+      type="button"
+      hx-delete="/data/graph?company={{ selected | urlencode }}&view=graph"
+      hx-target="#data-panel-inner"
+      hx-swap="outerHTML"
+      hx-confirm="Delete the entire entity graph for {{ selected }}? This cannot be undone — the next merge run will rebuild it from scratch."
+      class="rounded-md border border-rose-200 px-2 py-1 text-xs font-medium text-rose-600 hover:bg-rose-50 dark:border-rose-500/30 dark:text-rose-400 dark:hover:bg-rose-500/10"
+    >
+      Delete graph
+    </button>
+    {% endif %}
+  </div>
+</div>
+{% if graph_html %}
+<div class="overflow-x-auto rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/60">
+  {{ graph_html | safe }}
+</div>
+{% else %}
+<p class="text-sm text-slate-500 dark:text-slate-500">No graph yet for {{ selected }} — run <code class="rounded bg-slate-100 px-1 py-0.5 text-xs dark:bg-slate-800">pyro merge-graph</code> once it has extracted articles.</p>
+{% endif %}

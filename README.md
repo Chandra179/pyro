@@ -57,13 +57,37 @@ uv run pyro merge-graph --company-name Netflix
 uv run pyro graph --company-name Netflix   # list the entities/relationships stored in ArangoDB
 ```
 
+`clean` and `extract` take an optional `--company-name` to scope a run to one company; without it
+they process every pending article in the database.
+
 `uv run pyro run-all --company-name ... --sitemap-url ... --limit ...` runs all four
 stages in one CLI call, same as `run_pipeline.py` but with flags instead of edited constants.
 
 Pipeline state (scraped/cleaned/extracted article data) and the merged entity graph both live in
 ArangoDB — one database (`pyro` by default), three collections (`articles`, `entities`,
 `relationships`), everything scoped by `company_name` so one instance serves every company you
-run the pipeline against.
+run the pipeline against. `relationships` is an ArangoDB **edge** collection: each edge carries
+`_from`/`_to` handles into `entities`, so the graph is traversable with AQL
+(`FOR v, e IN 1..3 OUTBOUND ...`) rather than only readable as a flat list.
+
+### One-off maintenance commands
+
+Neither is needed for a fresh database — both exist to bring a database created by an earlier
+version up to the current schema, and both are no-ops once they have run.
+
+```bash
+uv run pyro migrate-relationships    # convert a document-collection `relationships` into an edge collection
+uv run pyro canonicalize-relations   # rewrite stored edges onto the controlled relation vocabulary
+```
+
+`migrate-relationships` preserves every edge (it derives `_from`/`_to` from the `source_key`/
+`target_key` fields the old schema already stored). Connecting to an unmigrated database fails
+fast with a message pointing at it, rather than misbehaving quietly.
+
+`canonicalize-relations` collapses synonym edges — `"sends requests to"`, `"routes requests to"`
+and `"calls"` used to be three separate edges between the same pair of systems, because the edge
+key includes the relation. It keeps each edge's original wording in `relation_phrase`, so the
+rewrite is auditable and the command can be safely re-run after the vocabulary is extended.
 
 ## Testing
 

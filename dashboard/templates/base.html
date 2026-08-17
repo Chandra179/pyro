@@ -16,7 +16,10 @@
     </script>
     <link rel="stylesheet" href="{{ url_for('static', path='css/app.css') }}" />
     <script src="{{ url_for('static', path='js/htmx.min.js') }}"></script>
+    <script src="{{ url_for('static', path='js/htmx-ext-sse.min.js') }}"></script>
     <script src="{{ url_for('static', path='js/mermaid.min.js') }}"></script>
+    {# defer: app.js touches elements defined below, and must not block first paint. #}
+    <script src="{{ url_for('static', path='js/app.js') }}" defer></script>
   </head>
   <body class="h-full bg-slate-50 text-slate-900 antialiased dark:bg-slate-950 dark:text-slate-100">
     <div class="flex h-full">
@@ -113,79 +116,5 @@
       </div>
     </div>
 
-    <script>
-      // Off-canvas sidebar (below md/768px) — toggled by the header hamburger button and
-      // closed by tapping the backdrop or navigating (the nav links do a full page load, so
-      // no explicit close-on-navigate handler is needed).
-      function toggleSidebar(open) {
-        var sidebar = document.getElementById("sidebar");
-        var backdrop = document.getElementById("sidebar-backdrop");
-        var isOpen = open !== undefined ? open : sidebar.classList.contains("-translate-x-full");
-        sidebar.classList.toggle("-translate-x-full", !isOpen);
-        sidebar.classList.toggle("translate-x-0", isOpen);
-        backdrop.classList.toggle("hidden", !isOpen);
-      }
-      document.getElementById("sidebar-toggle").addEventListener("click", function () {
-        toggleSidebar();
-      });
-    </script>
-
-    <script>
-      (function () {
-        var root = document.documentElement;
-        var sun = document.getElementById("icon-sun");
-        var moon = document.getElementById("icon-moon");
-        function syncIcons() {
-          var isDark = root.classList.contains("dark");
-          sun.classList.toggle("hidden", !isDark);
-          moon.classList.toggle("hidden", isDark);
-        }
-        syncIcons();
-        document.getElementById("theme-toggle").addEventListener("click", function () {
-          root.classList.toggle("dark");
-          localStorage.setItem("theme", root.classList.contains("dark") ? "dark" : "light");
-          syncIcons();
-        });
-      })();
-    </script>
-
-    <script>
-      // The graph view's diagram comes back from the server as a
-      // `<pre class="mermaid">` block (see api/render.py) — mermaid.js scans
-      // for that class and swaps in an inline SVG. startOnLoad is off
-      // because it can arrive either in the page's initial server render or
-      // later via an htmx swap (the panel's 4s poll, a tab switch, ...), so
-      // rendering is driven explicitly from both places below instead.
-      function currentMermaidTheme() {
-        return document.documentElement.classList.contains("dark") ? "dark" : "default";
-      }
-      mermaid.initialize({ startOnLoad: false, theme: currentMermaidTheme() });
-
-      function renderMermaidIn(root) {
-        if (!root || !root.querySelectorAll) return;
-        var nodes = root.querySelectorAll(".mermaid");
-        if (!nodes.length) return;
-        // Re-initialize with the current theme each time rather than trusting the call above —
-        // that one only ran once at page load, so a diagram rendered after a later dark-mode
-        // toggle would otherwise use stale (mismatched) colors.
-        mermaid.initialize({ startOnLoad: false, theme: currentMermaidTheme() });
-        mermaid.run({ nodes: nodes });
-      }
-
-      document.addEventListener("DOMContentLoaded", function () {
-        renderMermaidIn(document.body);
-      });
-
-      document.body.addEventListener("htmx:afterSwap", function (evt) {
-        renderMermaidIn(evt.detail.target);
-      });
-
-      // Click on the <dialog> backdrop (not its content) closes it — native
-      // <dialog> only auto-closes on Escape by default.
-      document.addEventListener("click", function (evt) {
-        var dialog = document.getElementById("preview-modal");
-        if (dialog && evt.target === dialog) dialog.close();
-      });
-    </script>
   </body>
 </html>

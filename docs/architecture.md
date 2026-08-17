@@ -75,28 +75,53 @@ for a blog of any size, degrading gracefully rather than stopping outright if a 
 becomes unavailable.
 
 **Merge.** Folds each post's independently extracted systems into the company's one running
-graph, one post at a time, in order. For each post, the model is shown the company's
-already-known system names — just the names, not full post content — alongside what this post
-extracted, and decides for each system whether it's the same as one already known (reuse that
-exact name) or genuinely new (keep the post's own name). That's the only judgment call this
-layer makes; everything else the post extracted (relationships, domain tags) carries through
-unchanged once names are resolved. Because each post's resolution needs to see what every prior
-post in the same run has already settled, this happens strictly one post at a time rather than in
-parallel. Once a post has been merged, it's remembered as handled so future runs only process
-genuinely new posts — and because the model only ever needs a flat list of names rather than the
-graph's full content, a run's cost tracks how many new posts arrived, not how large the company's
-graph has already grown.
+graph, one post at a time, in order.
+
+Resolution happens in two tiers, cheapest first. A deterministic pass matches this post's system
+names against the company's already-known ones by exact and near-exact string match, absorbing
+casing and punctuation drift without spending anything. Only the names it genuinely cannot settle
+go to the model, which is shown those names alongside the known names most similar to them, and
+decides for each whether it's the same as one already known (reuse that exact name) or genuinely
+new (keep the post's own name). A post that mentions only systems the graph already knows costs no
+model call at all. The similarity-based selection of which known names to show also keeps the
+prompt a fixed size as the company's graph grows into the hundreds of systems, rather than growing
+with it.
+
+Name resolution is the only judgment call this layer makes; everything else the post extracted
+(relationships, domain tags) carries through unchanged. Because each post's resolution needs to see
+what every prior post in the same run has already settled, this happens strictly one post at a time
+rather than in parallel. Once a post has been merged, it's remembered as handled so future runs only
+process genuinely new posts — so a run's cost tracks how many new posts arrived, not how large the
+company's graph has already grown.
 
 **Storage.** Three things are tracked, all scoped to the company they belong to so one running
 instance can serve any number of companies without their data mixing: each post's own journey
 through the pipeline (what stage it's reached, what it extracted), the resolved systems, and the
 resolved relationships between them.
 
+Relationships are stored as graph edges pointing at the system records on either end, not as
+standalone rows that merely name them — so questions that follow connections ("what does this
+depend on", "what breaks if this goes down", "how are these two related") are answered by the
+database walking the graph, rather than by loading every relationship into memory and rebuilding
+the graph there each time.
+
+The kind of connection an edge represents is drawn from a fixed vocabulary — `calls`, `writes_to`,
+`routes_to`, `replaced_by` and so on — rather than being whatever phrasing a post happened to use.
+This is what makes an edge between two systems mean one thing: without it, "sends requests to",
+"routes requests to" and "calls" describe one connection but store as three separate edges, and
+every diagram shows three arrows where there is one relationship. The model's original wording is
+kept alongside the canonical form, so nothing the post actually said is lost.
+
 **Dashboard.** A web interface for triggering runs (hand it a blog URL or a single article URL)
 and watching them progress through each stage in real time, including — during the merge stage
 specifically — watching each post's name-resolution call stream in, not just a "still working"
 indicator. It also offers a browsing view over everything already extracted for a company, and a
 live diagram of the company's current graph, independent of any particular run.
+
+That streaming is a push, not a poll: the browser holds one open connection per running job and
+receives each piece of model output once, as it is produced. The alternative it replaced — asking
+the server for the merge transcript once a second — re-sent the entire transcript on every ask, so
+the cost of watching a run grew with the run's own length.
 
 **Scheduling.** Since merging only processes posts that haven't been folded into the graph yet,
 it's cheap to re-run on a recurring schedule (e.g. every 15 minutes) rather than only ever being

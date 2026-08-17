@@ -32,7 +32,7 @@ class _FakeDb:
         self._articles = articles
         self.marked: list[str] = []
 
-    def fetch_unprocessed(self, stage, limit=None):
+    def fetch_unprocessed(self, stage, limit=None, company_name=None):
         assert stage == "extract"
         return self._articles
 

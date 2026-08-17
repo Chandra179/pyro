@@ -9,6 +9,7 @@
   "devDependencies": {
     "@tailwindcss/cli": "^4.3.3",
     "@tailwindcss/typography": "^0.5.20",
+    "htmx-ext-sse": "^2.2.4",
     "mermaid": "^11.16.1",
     "tailwindcss": "^4.3.3"
   }

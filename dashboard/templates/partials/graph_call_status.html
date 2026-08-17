@@ -1,0 +1,13 @@
+{#
+  One merge call's status badge. Its own file because the SSE stream sends it twice: once inside
+  the call card when the call opens (streaming), and once on its own as the `call-close-{i}` frame
+  that replaces it when the call finishes.
+#}
+{% from "partials/_macros.html" import badge %}
+{% if call.error %}
+  {{ badge("failed", "rose") }}
+{% elif call.done %}
+  {{ badge("done", "emerald") }}
+{% else %}
+  {{ badge("streaming", "amber", pulse=true) }}
+{% endif %}

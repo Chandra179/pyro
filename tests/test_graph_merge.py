@@ -50,7 +50,9 @@ class _FakeDb:
         self.entities[name] = {"name": name, "kind": kind, "domain": domain}
         return name
 
-    def upsert_relationship(self, company_name, source, target, relation, as_of, source_article_id):
+    def upsert_relationship(
+        self, company_name, source, target, relation, as_of, source_article_id, relation_phrase=None
+    ):
         self.relationships.append({"source": source, "target": target, "relation": relation})
 
     def list_entities(self, company_name):
@@ -100,6 +102,53 @@ async def test_run_graph_merge_resolves_reused_name_via_llm():
     assert result["articles_merged"] == 2
     assert list(db.entities.keys()) == ["vLLM"]
     assert db.merged_ids == ["a1", "a2"]
+
+
+@pytest.mark.asyncio
+async def test_second_article_reusing_known_names_costs_no_llm_call():
+    """The deterministic pre-pass (graph/resolve.py) is what makes a merge run cheap: once the
+    graph knows a system, an article naming it identically must not reach the model at all."""
+    a1 = _article("a1", entities=[{"name": "Cassandra", "kind": "datastore", "domain": "Other"}])
+    a2 = _article("a2", entities=[{"name": "cassandra", "kind": "datastore", "domain": "Other"}])
+    db = _FakeDb(extracted_articles=[a1, a2], pending_articles=[a1, a2])
+
+    # Exactly one response available: a second call would raise StopIteration and fail the test.
+    responses = iter(
+        [json.dumps({"resolved": [{"article_name": "Cassandra", "canonical_name": "Cassandra"}]})]
+    )
+
+    async def fake_acompletion(**kwargs):
+        return _fake_stream_response(next(responses))
+
+    settings = Settings(_env_file=None, openrouter_api_key="or-key")
+    with patch(
+        "pyro.graph.merge.acompletion", new=AsyncMock(side_effect=fake_acompletion)
+    ) as mock_call:
+        result = await run_graph_merge(db, settings, "acme")
+
+    assert result["articles_merged"] == 2
+    assert mock_call.await_count == 1
+    # Case drift resolved to the stored spelling, so no duplicate entity was created.
+    assert list(db.entities.keys()) == ["Cassandra"]
+
+
+@pytest.mark.asyncio
+async def test_malformed_merge_response_does_not_abort_the_run():
+    """A bad response leaves names unresolved (entities treated as new) rather than raising —
+    over-counting is recoverable by a later re-merge; a crashed run mid-way is not."""
+    a1 = _article("a1", entities=[{"name": "Titus", "kind": "service", "domain": "Other"}])
+    db = _FakeDb(extracted_articles=[a1], pending_articles=[a1])
+
+    async def fake_acompletion(**kwargs):
+        return _fake_stream_response('{"resolved": "not-a-list"}')
+
+    settings = Settings(_env_file=None, openrouter_api_key="or-key")
+    with patch("pyro.graph.merge.acompletion", new=AsyncMock(side_effect=fake_acompletion)):
+        result = await run_graph_merge(db, settings, "acme")
+
+    assert result["articles_merged"] == 1
+    assert list(db.entities.keys()) == ["Titus"]
+    assert db.merged_ids == ["a1"]
 
 
 @pytest.mark.asyncio

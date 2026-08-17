@@ -13,19 +13,14 @@ from fastapi import FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from sse_starlette.sse import EventSourceResponse
 
-from api.data import (
-    delete_all_articles,
-    delete_article,
-    delete_graph,
-    get_article,
-    get_extraction,
-    get_graph,
-    list_companies,
-)
+from api.deps import DbDep
 from api.graph_view import build_graph_mermaid
 from api.jobs import JOBS, list_jobs, submit_job
 from api.render import render_mermaid
+from api.sse import graph_history_events
+from pyro.db import Database
 from pyro.prompts import list_variants
 
 load_dotenv()
@@ -71,6 +66,13 @@ def _resolve_template(raw: str) -> str:
     return raw
 
 
+def _job_or_404(job_id: str):
+    job = JOBS.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="job not found")
+    return job
+
+
 @app.post("/jobs", response_class=HTMLResponse)
 def create_job(
     request: Request,
@@ -87,34 +89,44 @@ def create_job(
 
 @app.get("/jobs/{job_id}", response_class=HTMLResponse)
 def job_status(request: Request, job_id: str) -> HTMLResponse:
-    job = JOBS.get(job_id)
-    if job is None:
-        raise HTTPException(status_code=404, detail="job not found")
-    return templates.TemplateResponse(request, "partials/job_status.html", {"job": job})
+    return templates.TemplateResponse(
+        request, "partials/job_status.html", {"job": _job_or_404(job_id)}
+    )
 
 
 @app.get("/jobs/{job_id}/graph-history", response_class=HTMLResponse)
 def job_graph_history(request: Request, job_id: str) -> HTMLResponse:
-    """Polled every 1s (see partials/graph_history.html) while a job is merging, to show each
-    LLM call's output streaming in — separately from the outer job card's slower 2s stage poll,
-    since this needs finer granularity only during that one stage."""
-    job = JOBS.get(job_id)
-    if job is None:
-        raise HTTPException(status_code=404, detail="job not found")
+    """Static render of a run's merge history. The live view streams over
+    /jobs/{id}/graph-events instead; this stays as the no-JavaScript/after-the-fact rendering and
+    is what a page load of a finished job serves."""
     return templates.TemplateResponse(
-        request, "partials/graph_history.html", {"job": job}
+        request, "partials/graph_history.html", {"job": _job_or_404(job_id)}
     )
 
 
-def _data_context(company: str | None, view: str) -> dict:
+@app.get("/jobs/{job_id}/graph-events")
+async def job_graph_events(request: Request, job_id: str) -> EventSourceResponse:
+    """Live merge output as server-sent events — see api/sse.py for the event vocabulary."""
+    job = _job_or_404(job_id)
+    return EventSourceResponse(graph_history_events(request, job, templates))
+
+
+def _data_context(db: Database, company: str | None, view: str) -> dict:
     view = view if view in ("extraction", "graph") else "extraction"
     try:
-        companies = list_companies()
+        companies = db.list_company_names()
         selected = (
             company if company in companies else (companies[0] if companies else None)
         )
-        articles = get_extraction(selected) if selected else []
-        graph = get_graph(selected) if selected else {"entities": [], "relationships": []}
+        articles = db.list_articles(selected) if selected else []
+        graph = (
+            {
+                "entities": db.list_entities(selected),
+                "relationships": db.list_relationships(selected),
+            }
+            if selected
+            else {"entities": [], "relationships": []}
+        )
     except Exception as exc:
         logger.exception("Data view failed to load from the database")
         return {
@@ -140,25 +152,33 @@ def _data_context(company: str | None, view: str) -> dict:
 
 @app.get("/data", response_class=HTMLResponse)
 def data_page(
-    request: Request, company: str | None = None, view: str = "extraction"
+    request: Request,
+    db: DbDep,
+    company: str | None = None,
+    view: str = "extraction",
 ) -> HTMLResponse:
     return templates.TemplateResponse(
-        request, "data.html", _data_context(company, view)
+        request, "data.html", _data_context(db, company, view)
     )
 
 
 @app.get("/data/panel", response_class=HTMLResponse)
 def data_panel(
-    request: Request, company: str | None = None, view: str = "extraction"
+    request: Request,
+    db: DbDep,
+    company: str | None = None,
+    view: str = "extraction",
 ) -> HTMLResponse:
     return templates.TemplateResponse(
-        request, "partials/data_panel.html", _data_context(company, view)
+        request, "partials/data_panel.html", _data_context(db, company, view)
     )
 
 
 @app.get("/data/article/{article_id}", response_class=HTMLResponse)
-def article_preview(request: Request, article_id: str, company: str) -> HTMLResponse:
-    article = get_article(company, article_id)
+def article_preview(
+    request: Request, db: DbDep, article_id: str, company: str
+) -> HTMLResponse:
+    article = db.get_article_for_company(company, article_id)
     if article is None:
         raise HTTPException(status_code=404, detail="article not found")
     return templates.TemplateResponse(
@@ -168,29 +188,35 @@ def article_preview(request: Request, article_id: str, company: str) -> HTMLResp
 
 @app.delete("/data/article/{article_id}", response_class=HTMLResponse)
 def delete_article_route(
-    request: Request, article_id: str, company: str, view: str = "extraction"
+    request: Request,
+    db: DbDep,
+    article_id: str,
+    company: str,
+    view: str = "extraction",
 ) -> HTMLResponse:
-    delete_article(company, article_id)
+    # Ownership check before deleting, so an article id alone can't delete another company's row.
+    if db.get_article_for_company(company, article_id) is not None:
+        db.delete_article(article_id)
     return templates.TemplateResponse(
-        request, "partials/data_panel.html", _data_context(company, view)
+        request, "partials/data_panel.html", _data_context(db, company, view)
     )
 
 
 @app.delete("/data/articles", response_class=HTMLResponse)
 def delete_all_articles_route(
-    request: Request, company: str, view: str = "extraction"
+    request: Request, db: DbDep, company: str, view: str = "extraction"
 ) -> HTMLResponse:
-    delete_all_articles(company)
+    db.delete_articles_for_company(company)
     return templates.TemplateResponse(
-        request, "partials/data_panel.html", _data_context(company, view)
+        request, "partials/data_panel.html", _data_context(db, company, view)
     )
 
 
 @app.delete("/data/graph", response_class=HTMLResponse)
 def delete_graph_route(
-    request: Request, company: str, view: str = "graph"
+    request: Request, db: DbDep, company: str, view: str = "graph"
 ) -> HTMLResponse:
-    delete_graph(company)
+    db.delete_graph_for_company(company)
     return templates.TemplateResponse(
-        request, "partials/data_panel.html", _data_context(company, view)
+        request, "partials/data_panel.html", _data_context(db, company, view)
     )

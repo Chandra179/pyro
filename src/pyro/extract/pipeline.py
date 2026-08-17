@@ -20,7 +20,12 @@ from pyro.clean.chunk import chunk_text
 from pyro.config import Settings
 from pyro.db import Database
 from pyro.extract.prompts import extraction_system_prompt, extraction_user_prompt
-from pyro.extract.schema import DOMAINS, ExtractedGraph, merge_graph_chunks
+from pyro.extract.schema import (
+    DOMAINS,
+    RELATION_KINDS,
+    ExtractedGraph,
+    merge_graph_chunks,
+)
 from pyro.router import call_with_rate_limit_retry, concrete_model_params
 
 logger = logging.getLogger(__name__)
@@ -94,7 +99,11 @@ async def extract_chunk(
         {
             "role": "user",
             "content": user_template.format(
-                title=title, url=url, content=content, domains=", ".join(domains)
+                title=title,
+                url=url,
+                content=content,
+                domains=", ".join(domains),
+                relations="\n".join(f"- {r}" for r in RELATION_KINDS),
             ),
         },
     ]
@@ -145,11 +154,14 @@ async def extract_article(
 
 
 async def run_extraction(
-    db: Database, settings: Settings, limit: int | None = None
+    db: Database,
+    settings: Settings,
+    limit: int | None = None,
+    company_name: str | None = None,
 ) -> int:
-    """Extract the entity/relationship graph for all unextracted, cleaned articles. Returns
-    count processed."""
-    articles = db.fetch_unprocessed("extract", limit=limit)
+    """Extract the entity/relationship graph for unextracted, cleaned articles, optionally scoped
+    to one company. Returns count processed."""
+    articles = db.fetch_unprocessed("extract", limit=limit, company_name=company_name)
     if not articles:
         return 0
 

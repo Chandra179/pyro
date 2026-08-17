@@ -1,50 +1,47 @@
-{% from "partials/_macros.html" import badge %}
 {#
-  Rendered inline in job_status.html (initial paint) and re-fetched wholesale by its own
-  hx-get below while the job is merging — kept separate from the outer job card's 2s poll so a
-  per-call streaming cadence (1s) doesn't force a full card re-render. Once the job leaves
-  "merging" the polling attrs disappear (server stops including them) and the last fetched
-  state just sits there as history.
+  A run's graph-merge history, rendered inside job_status.html.
+
+  Two modes, keyed on whether the job is still running:
+
+  - running: subscribes to /jobs/{id}/graph-events (api/sse.py) and receives each streamed byte
+    exactly once. `call-open` prepends a card into the list; that card's own elements then
+    subscribe to their delta events. This replaced a 1s poll that re-rendered every call's entire
+    accumulated content on every tick, so the response grew for the duration of the run.
+  - finished: a plain static render of job.graph_history, with no subscriptions to leak. This is
+    also what a page load of an already-finished job serves.
+
+  A fresh connection replays from the first call, so reloading the page mid-run rebuilds the whole
+  history rather than showing only what happens next.
+
+  `sse-close="stream-close"` tears the connection down on the server's final frame, so a finished
+  card doesn't hold an EventSource open.
+
+  The container is emitted for the whole life of a running job (before merging starts, it is
+  simply empty) — see the note in job_status.html on why it must never be swapped in later. The
+  :has() rule in static/src/input.css keeps it hidden until the first card lands.
 #}
 <div
   id="graph-history-{{ job.id }}"
-  {% if job.status == "merging" %}
-  hx-get="/jobs/{{ job.id }}/graph-history"
-  hx-trigger="every 1s"
-  hx-swap="outerHTML"
+  class="graph-history mt-3 border-t border-slate-200 pt-3 dark:border-slate-800"
+  {% if not job.is_finished %}
+  hx-ext="sse"
+  sse-connect="/jobs/{{ job.id }}/graph-events"
+  sse-close="stream-close"
   {% endif %}
-  class="mt-3 border-t border-slate-200 pt-3 dark:border-slate-800"
 >
   <p class="mb-2 text-[10px] uppercase tracking-wide text-slate-400 dark:text-slate-600">
     Graph merge history
   </p>
-  <div class="flex flex-col gap-2">
-    {% for call in job.graph_history | reverse %}
-    <div class="rounded border border-slate-200 bg-slate-50 p-2 text-xs dark:border-slate-800 dark:bg-slate-950/40">
-      <div class="flex items-center justify-between gap-2">
-        <span class="truncate font-medium">{{ call.label }}</span>
-        {% if call.error %}
-          {{ badge("failed", "rose") }}
-        {% elif call.done %}
-          {{ badge("done", "emerald") }}
-        {% else %}
-          {{ badge("streaming", "amber", pulse=true) }}
-        {% endif %}
-      </div>
-      {% if call.model %}
-      <p class="mt-0.5 text-[10px] text-slate-400 dark:text-slate-600">{{ call.model }}</p>
-      {% endif %}
-      {% if call.reasoning %}
-      <details class="mt-1">
-        <summary class="cursor-pointer text-slate-400 dark:text-slate-500">thinking</summary>
-        <pre class="mt-1 max-h-32 overflow-y-auto whitespace-pre-wrap text-slate-500 dark:text-slate-400">{{ call.reasoning }}</pre>
-      </details>
-      {% endif %}
-      <pre class="mt-1 max-h-40 overflow-y-auto whitespace-pre-wrap text-slate-600 dark:text-slate-300">{{ call.content }}</pre>
-      {% if call.error %}
-      <p class="mt-1 text-rose-500 dark:text-rose-400">{{ call.error }}</p>
-      {% endif %}
-    </div>
-    {% endfor %}
+  {# New cards arrive at the top (afterbegin), matching the newest-first order a finished run
+     renders in below. #}
+  <div
+    class="graph-history-list flex flex-col gap-2"
+    {% if not job.is_finished %}sse-swap="call-open" hx-swap="afterbegin"{% endif %}
+  >
+    {% if job.is_finished %}
+      {% for call in job.graph_history | reverse %}
+        {% with index = none %}{% include "partials/graph_call.html" %}{% endwith %}
+      {% endfor %}
+    {% endif %}
   </div>
 </div>

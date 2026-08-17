@@ -1,0 +1,50 @@
+{#
+  One merge LLM call. Rendered in two situations:
+
+  - by the SSE stream as the `call-open` frame, when a call starts. `index` is set, and the
+    elements below subscribe to that call's own delta events so streamed output is appended
+    (hx-swap="beforeend") rather than the whole card being re-sent.
+  - by partials/graph_history.html for a finished run, with `index` unset — no subscriptions, the
+    content is simply already there.
+#}
+{% set streaming = index is not none %}
+<div class="rounded border border-slate-200 bg-slate-50 p-2 text-xs dark:border-slate-800 dark:bg-slate-950/40">
+  <div class="flex items-center justify-between gap-2">
+    <span class="truncate font-medium">{{ call.label }}</span>
+    <span {% if streaming %}sse-swap="call-close-{{ index }}" hx-swap="outerHTML"{% endif %}>
+      {% include "partials/graph_call_status.html" %}
+    </span>
+  </div>
+  {% if call.model %}
+  <p class="mt-0.5 text-[10px] text-slate-400 dark:text-slate-600">{{ call.model }}</p>
+  {% endif %}
+  {% if streaming or call.reasoning %}
+  {# Hidden while its <pre> is still empty, so models that don't emit reasoning never show an
+     empty "thinking" disclosure — see the details:has(pre:empty) rule in static/src/input.css. #}
+  <details class="mt-1">
+    <summary class="cursor-pointer text-slate-400 dark:text-slate-500">thinking</summary>
+    <pre
+      class="mt-1 max-h-32 overflow-y-auto whitespace-pre-wrap text-slate-500 dark:text-slate-400"
+      data-autoscroll
+      {% if streaming %}sse-swap="call-reasoning-{{ index }}" hx-swap="beforeend"{% endif %}
+    >{{ call.reasoning }}</pre>
+  </details>
+  {% endif %}
+  <pre
+    class="mt-1 max-h-40 overflow-y-auto whitespace-pre-wrap text-slate-600 dark:text-slate-300"
+    data-autoscroll
+    {% if streaming %}sse-swap="call-delta-{{ index }}" hx-swap="beforeend"{% endif %}
+  >{{ call.content }}</pre>
+  {# A call's error is only known when it ends, i.e. after this card was painted — so while
+     streaming this stays as an empty slot the `call-error-{i}` frame fills in. Empty slots are
+     hidden by the :empty rule in static/src/input.css. #}
+  {% if streaming %}
+  <p
+    class="call-error mt-1 text-rose-500 dark:text-rose-400"
+    sse-swap="call-error-{{ index }}"
+    hx-swap="innerHTML"
+  ></p>
+  {% elif call.error %}
+  <p class="call-error mt-1 text-rose-500 dark:text-rose-400">{{ call.error }}</p>
+  {% endif %}
+</div>

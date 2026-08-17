@@ -113,8 +113,25 @@ class Job:
         return self.status in ("done", "error")
 
 
-# Process-local job store, newest first when listed.
+# Process-local job store, newest first when listed. Bounded because a Job retains every byte of
+# every merge call it streamed: an unbounded dict in a long-running dashboard is a slow leak whose
+# size is driven by model output, not by job count. Insertion-ordered, so evicting the oldest
+# finished job is just walking from the front.
 JOBS: dict[str, Job] = {}
+MAX_RETAINED_JOBS = 50
+
+
+def _evict_old_jobs() -> None:
+    """Drop the oldest *finished* jobs once the store exceeds MAX_RETAINED_JOBS. Running jobs are
+    never evicted regardless of age — their background thread still writes to them, and their card
+    is still polling."""
+    if len(JOBS) <= MAX_RETAINED_JOBS:
+        return
+    for job_id, job in list(JOBS.items()):
+        if len(JOBS) <= MAX_RETAINED_JOBS:
+            break
+        if job.is_finished:
+            del JOBS[job_id]
 
 
 async def _resolve_urls(
@@ -149,10 +166,13 @@ def _run_job(job: Job) -> None:
                 )
             )
 
+        # Scoped to this job's company: the clean/extract stages select work purely by which
+        # fields are still null, so two dashboard jobs running at once would otherwise process
+        # each other's articles and report each other's counts.
         job.status = "cleaning"
-        _clean_impl(settings=settings)
+        _clean_impl(settings=settings, company_name=job.company_name)
         job.status = "extracting"
-        _extract_impl(settings=settings)
+        _extract_impl(settings=settings, company_name=job.company_name)
         job.status = "merging"
         _merge_graph_impl(
             job.company_name,
@@ -179,6 +199,7 @@ def submit_job(
         extraction_variant=extraction_variant,
     )
     JOBS[job.id] = job
+    _evict_old_jobs()
     threading.Thread(target=_run_job, args=(job,), daemon=True).start()
     return job
 

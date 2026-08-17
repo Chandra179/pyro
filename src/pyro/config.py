@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from functools import lru_cache
 from pathlib import Path
 
 from pydantic import BaseModel
@@ -184,6 +185,15 @@ class Settings(BaseSettings):
     graph_max_tokens: int = 8000
     # Temporary cap on articles merged per run, for cheap test runs.
     graph_article_limit: int | None = None
+    # Minimum rapidfuzz token_sort_ratio (0-100) for the deterministic pre-pass to treat an
+    # article's entity name as the same system as an existing one without asking the model. High
+    # by design: a false merge silently fuses two real systems into one node and is much harder to
+    # notice than a missed merge, which the LLM tier still catches. See graph/resolve.py.
+    graph_fuzzy_threshold: int = 92
+    # Cap on how many existing entity names the merge prompt is shown. Below this count every
+    # name is included; above it, only the names most similar to the unresolved entities, so
+    # prompt size stays flat as a company's graph grows. None disables the cap.
+    graph_candidate_names_limit: int | None = 40
 
     # Fixed domain taxonomy, tagged on extracted entities/relationships — kept as a shared axis
     # for a future cross-company comparison feature, not used to classify/group anymore.
@@ -227,5 +237,14 @@ class Settings(BaseSettings):
         )
 
 
+@lru_cache(maxsize=1)
 def get_settings() -> Settings:
+    """The process-wide Settings instance.
+
+    Cached because constructing one re-reads both `.env` and `config/config.yaml` off disk. The
+    dashboard used to build a fresh Settings inside every read accessor, so a single `/data/panel`
+    request — which polls every 4 seconds — did that three times over. Anything that wants
+    per-call overrides (run_pipeline.py, api/jobs.py picking a prompt variant) constructs
+    `Settings(...)` directly and is unaffected by this cache.
+    """
     return Settings()
