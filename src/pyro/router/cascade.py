@@ -1,4 +1,4 @@
-"""LiteLLM Router cascade config (plan.md 'Model Routing: The Free Provider First Model').
+"""LiteLLM Router cascade config (docs/architecture.md, "The layers" — Model routing).
 
 Tiers are included only when their env-var key is actually configured, so the
 cascade degrades gracefully down to whatever provider(s) are available. Order:
@@ -32,21 +32,12 @@ cascade degrades gracefully down to whatever provider(s) are available. Order:
 
 from __future__ import annotations
 
-import logging
-from collections.abc import Awaitable, Callable
-from typing import TypeVar
-
 import litellm
 from litellm import Router
-from litellm.exceptions import RateLimitError
-from tenacity import retry_if_exception_type, stop_after_attempt, wait_fixed
-from tenacity.asyncio import AsyncRetrying
 
 from pyro.config import Settings
 
-logger = logging.getLogger(__name__)
-
-T = TypeVar("T")
+_NO_PROVIDER_ERROR = "No LLM provider configured — set at least OPENROUTER_API_KEY."
 
 
 def _max_tokens_for(model: str, fallback: int) -> int:
@@ -57,36 +48,6 @@ def _max_tokens_for(model: str, fallback: int) -> int:
         return litellm.get_max_tokens(model) or fallback
     except Exception:
         return fallback
-
-
-def _log_rate_limit_retry(settings: Settings, retry_state) -> None:
-    logger.warning(
-        "rate limited (attempt %d/%d) — waiting %ds: %s",
-        retry_state.attempt_number,
-        settings.router.rate_limit_max_retries,
-        settings.router.rate_limit_wait_seconds,
-        retry_state.outcome.exception(),
-    )
-
-
-async def call_with_rate_limit_retry(
-    fn: Callable[[], Awaitable[T]], settings: Settings
-) -> T:
-    """Retry fn() (one acompletion call) on RateLimitError, waiting router.rate_limit_wait_seconds
-    between attempts. Needed because a provider-level throttle (e.g. TokenRouter's "Maximum 1
-    requests within 1 minutes") can be far tighter than the cascade's own num_retries/cooldown_time,
-    which only governs advancing to the *next* tier — no help when the rate-limited tier is the
-    only one configured."""
-    async for attempt in AsyncRetrying(
-        stop=stop_after_attempt(settings.router.rate_limit_max_retries),
-        wait=wait_fixed(settings.router.rate_limit_wait_seconds),
-        retry=retry_if_exception_type(RateLimitError),
-        before_sleep=lambda retry_state: _log_rate_limit_retry(settings, retry_state),
-        reraise=True,
-    ):
-        with attempt:
-            return await fn()
-    raise AssertionError("unreachable — AsyncRetrying always returns or raises")
 
 
 def build_model_list(settings: Settings) -> list[dict]:
@@ -184,9 +145,7 @@ def build_router(settings: Settings | None = None) -> Router:
     settings = settings or Settings()
     model_list = build_model_list(settings)
     if not model_list:
-        raise RuntimeError(
-            "No LLM provider configured — set at least OPENROUTER_API_KEY."
-        )
+        raise RuntimeError(_NO_PROVIDER_ERROR)
     return Router(
         model_list=model_list,
         num_retries=settings.router.num_retries,
@@ -208,29 +167,27 @@ def concrete_model_names(settings: Settings | None = None) -> list[str]:
     return [entry["litellm_params"]["model"] for entry in build_model_list(settings)]
 
 
-def synthesis_model_params(settings: Settings | None = None) -> dict:
-    """Credentials for the single-shot high-reasoning synthesis pass.
+def graph_model_params(settings: Settings | None = None) -> dict:
+    """Credentials for the single-shot high-reasoning graph-merge pass.
 
-    Uses `settings.synthesis_model` (an OpenRouter free model by default) when
+    Uses `settings.graph_model` (an OpenRouter free model by default) when
     `OPENROUTER_API_KEY` is actually configured; otherwise falls back to the
     last (highest-capability / most-paid) tier in the extraction cascade, so
-    synthesis still runs when only a subset of providers — e.g. just
+    merging still runs when only a subset of providers — e.g. just
     TokenRouter — is configured.
     """
     settings = settings or Settings()
-    if settings.openrouter_api_key and settings.synthesis_model.startswith(
+    if settings.openrouter_api_key and settings.graph_model.startswith(
         "openrouter/"
     ):
         return {
-            "model": settings.synthesis_model,
+            "model": settings.graph_model,
             "api_key": settings.openrouter_api_key,
         }
 
     model_list = build_model_list(settings)
     if not model_list:
-        raise RuntimeError(
-            "No LLM provider configured — set at least OPENROUTER_API_KEY."
-        )
+        raise RuntimeError(_NO_PROVIDER_ERROR)
     return dict(model_list[-1]["litellm_params"])
 
 

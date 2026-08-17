@@ -1,4 +1,4 @@
-"""Read-only accessors for the dashboard's Data view (extraction + synthesis, live
+"""Read-only accessors for the dashboard's Data view (extraction + graph, live
 from ArangoDB). Kept separate from api/jobs.py since this reads committed pipeline
 state rather than tracking an in-flight job.
 """
@@ -21,16 +21,13 @@ def get_extraction(company_name: str) -> list[Article]:
         return db.list_articles(company_name)
 
 
-def get_synthesis(company_name: str) -> list[dict]:
+def get_graph(company_name: str) -> dict:
     settings = Settings()
     with open_db_from_settings(settings) as db:
-        return db.list_docs(company_name)
-
-
-def get_doc(company_name: str, doc_key: str) -> dict | None:
-    settings = Settings()
-    with open_db_from_settings(settings) as db:
-        return db.get_doc_for_company(company_name, doc_key)
+        return {
+            "entities": db.list_entities(company_name),
+            "relationships": db.list_relationships(company_name),
+        }
 
 
 def get_article(company_name: str, article_id: str) -> Article | None:
@@ -53,15 +50,7 @@ def delete_all_articles(company_name: str) -> None:
         db.delete_articles_for_company(company_name)
 
 
-def delete_doc(company_name: str, doc_key: str) -> None:
+def delete_graph(company_name: str) -> None:
     settings = Settings()
     with open_db_from_settings(settings) as db:
-        doc = db.get_doc_for_company(company_name, doc_key)
-        if doc is not None:
-            db.delete_doc(doc_key, company_name)
-
-
-def delete_all_docs(company_name: str) -> None:
-    settings = Settings()
-    with open_db_from_settings(settings) as db:
-        db.delete_docs_for_company(company_name)
+        db.delete_graph_for_company(company_name)

@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
 from collections.abc import Callable
 from typing import TypeVar
 
@@ -20,13 +19,8 @@ from litellm import acompletion
 from pyro.clean.chunk import chunk_text
 from pyro.config import Settings
 from pyro.db import Database
-from pyro.extract.prompts import (
-    extraction_freeform_system_prompt,
-    extraction_freeform_user_prompt,
-    extraction_system_prompt,
-    extraction_user_prompt,
-)
-from pyro.extract.schema import DOMAINS, ExtractedFacts, merge_facts
+from pyro.extract.prompts import extraction_system_prompt, extraction_user_prompt
+from pyro.extract.schema import DOMAINS, ExtractedGraph, merge_graph_chunks
 from pyro.router import call_with_rate_limit_retry, concrete_model_params
 
 logger = logging.getLogger(__name__)
@@ -78,9 +72,9 @@ async def _run_model_cascade(
     raise RuntimeError(f"all models in cascade failed: {last_error}") from last_error
 
 
-def _parse_extracted_facts(raw: str) -> ExtractedFacts:
+def _parse_extracted_graph(raw: str) -> ExtractedGraph:
     parsed = repair_json(raw, return_objects=True)
-    return ExtractedFacts.model_validate(parsed)
+    return ExtractedGraph.model_validate(parsed)
 
 
 async def extract_chunk(
@@ -93,7 +87,7 @@ async def extract_chunk(
     domains: list[str] = DOMAINS,
     decoding_params: dict | None = None,
     settings: Settings | None = None,
-) -> ExtractedFacts:
+) -> ExtractedGraph:
     settings = settings or Settings()
     messages = [
         {"role": "system", "content": system_prompt},
@@ -107,7 +101,7 @@ async def extract_chunk(
     return await _run_model_cascade(
         messages,
         model_params,
-        _parse_extracted_facts,
+        _parse_extracted_graph,
         decoding_params,
         settings,
         extra_kwargs={"response_format": {"type": "json_object"}},
@@ -115,9 +109,16 @@ async def extract_chunk(
 
 
 async def extract_article(
-    title: str, url: str, cleaned_text: str, settings: Settings
-) -> ExtractedFacts:
-    model_params = concrete_model_params(settings)
+    title: str,
+    url: str,
+    cleaned_text: str,
+    settings: Settings,
+    model_params: list[dict] | None = None,
+) -> ExtractedGraph:
+    """model_params defaults to rebuilding the cascade from settings, but callers processing
+    many articles from the same run (see run_extraction) should build it once and pass it in —
+    settings don't change mid-run, so recomputing per article is redundant."""
+    model_params = model_params if model_params is not None else concrete_model_params(settings)
     system_prompt = extraction_system_prompt(settings)
     user_template = extraction_user_prompt(settings)
     chunks = chunk_text(
@@ -126,7 +127,7 @@ async def extract_article(
         overlap_tokens=settings.chunk_overlap_tokens,
     )
     decoding_params = _decoding_params(settings)
-    facts_list = [
+    graphs = [
         await extract_chunk(
             title,
             url,
@@ -140,92 +141,35 @@ async def extract_article(
         )
         for chunk in chunks
     ]
-    return merge_facts(facts_list, settings.domains)
-
-
-_DEGENERATE_REPEAT_RE = re.compile(r"\b(\w+)\b(?:\s+\1\b){4,}", re.IGNORECASE)
-
-
-def _is_degenerate(text: str) -> bool:
-    """True if some word repeats 5+ times in a row — the decoding-collapse failure mode some
-    free/small models fall into near their output limit (e.g. "Lorem Lorem Lorem ..."). A 200 OK
-    response like this passes schema/exception checks but is garbage, so it needs its own check
-    to trigger the same advance-to-next-model behavior as a provider error."""
-    return bool(_DEGENERATE_REPEAT_RE.search(text))
-
-
-def _parse_freeform_text(raw: str) -> str:
-    if _is_degenerate(raw):
-        raise ValueError("degenerate output (repeated-word collapse)")
-    return raw
-
-
-async def extract_freeform_chunk(
-    title: str,
-    url: str,
-    content: str,
-    model_params: list[dict],
-    system_prompt: str,
-    user_template: str,
-    decoding_params: dict | None = None,
-    settings: Settings | None = None,
-) -> str:
-    """Same model-cascade fallback as extract_chunk, but no schema — returns raw text."""
-    settings = settings or Settings()
-    messages = [
-        {"role": "system", "content": system_prompt},
-        {
-            "role": "user",
-            "content": user_template.format(title=title, url=url, content=content),
-        },
-    ]
-    return await _run_model_cascade(
-        messages, model_params, _parse_freeform_text, decoding_params, settings
-    )
-
-
-async def extract_article_freeform(
-    title: str, url: str, cleaned_text: str, settings: Settings
-) -> str:
-    """Freeform mode: one plain-text summary per article, no chunking/merging."""
-    model_params = concrete_model_params(settings)
-    system_prompt = extraction_freeform_system_prompt(settings)
-    user_template = extraction_freeform_user_prompt(settings)
-    return await extract_freeform_chunk(
-        title,
-        url,
-        cleaned_text,
-        model_params,
-        system_prompt,
-        user_template,
-        _decoding_params(settings),
-        settings,
-    )
+    return merge_graph_chunks(graphs)
 
 
 async def run_extraction(
     db: Database, settings: Settings, limit: int | None = None
 ) -> int:
-    """Extract facts for all unextracted, cleaned articles. Returns count processed."""
+    """Extract the entity/relationship graph for all unextracted, cleaned articles. Returns
+    count processed."""
     articles = db.fetch_unprocessed("extract", limit=limit)
     if not articles:
         return 0
 
     sem = asyncio.Semaphore(settings.extraction_concurrency)
+    model_params = concrete_model_params(settings)
 
     async def _process(article) -> None:
         async with sem:
             try:
-                facts = await extract_article(
+                graph = await extract_article(
                     article.title or "",
                     article.source_url,
                     article.cleaned_text,
                     settings,
+                    model_params,
                 )
             except Exception:
                 logger.exception("extraction failed for %s", article.id)
                 return
-            db.mark_extracted(article.id, facts.model_dump())
+            db.mark_extracted(article.id, graph.model_dump())
 
     await asyncio.gather(*(_process(a) for a in articles))
     return len(articles)

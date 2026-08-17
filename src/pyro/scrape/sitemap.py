@@ -1,4 +1,4 @@
-"""Sitemap XML discovery — the master URL list (plan.md 'Raw Phase')."""
+"""Sitemap XML discovery — the master URL list (docs/architecture.md, "The layers" — Ingestion)."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""Boilerplate stripping + code-block collapsing (plan.md 'Cleaning & Chunking Phase')."""
+"""Boilerplate stripping + code-block collapsing (docs/architecture.md, "The layers" — Cleaning)."""
 
 from __future__ import annotations
 

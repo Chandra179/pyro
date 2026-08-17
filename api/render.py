@@ -38,3 +38,12 @@ def render_markdown(content: str) -> str:
     """Render doc markdown to HTML, turning ```mermaid fences into mermaid.js source blocks."""
     _renderer.reset()
     return _renderer.convert(content)
+
+
+def render_mermaid(source: str) -> str:
+    """Wrap raw Mermaid diagram source in the same markup _mermaid_fence produces for a
+    ```mermaid fence, so the graph view (api/graph_view.py) reuses the exact client-side
+    rendering path (mermaid.min.js scanning for `<pre class="mermaid">`) that synthesized docs
+    used, without going through the markdown pipeline for a diagram that isn't embedded in
+    prose."""
+    return f'<pre class="not-prose mermaid">{html.escape(source)}</pre>'

@@ -150,63 +150,40 @@
     </script>
 
     <script>
-      // Diagrams in synthesized docs come back from the server as
-      // `<pre class="mermaid">` blocks (see api/render.py) — mermaid.js
-      // scans for that class and swaps in an inline SVG. startOnLoad is off
-      // because the doc modal's content only exists after an htmx swap.
-      mermaid.initialize({
-        startOnLoad: false,
-        theme: document.documentElement.classList.contains("dark") ? "dark" : "default",
+      // The graph view's diagram comes back from the server as a
+      // `<pre class="mermaid">` block (see api/render.py) — mermaid.js scans
+      // for that class and swaps in an inline SVG. startOnLoad is off
+      // because it can arrive either in the page's initial server render or
+      // later via an htmx swap (the panel's 4s poll, a tab switch, ...), so
+      // rendering is driven explicitly from both places below instead.
+      function currentMermaidTheme() {
+        return document.documentElement.classList.contains("dark") ? "dark" : "default";
+      }
+      mermaid.initialize({ startOnLoad: false, theme: currentMermaidTheme() });
+
+      function renderMermaidIn(root) {
+        if (!root || !root.querySelectorAll) return;
+        var nodes = root.querySelectorAll(".mermaid");
+        if (!nodes.length) return;
+        // Re-initialize with the current theme each time rather than trusting the call above —
+        // that one only ran once at page load, so a diagram rendered after a later dark-mode
+        // toggle would otherwise use stale (mismatched) colors.
+        mermaid.initialize({ startOnLoad: false, theme: currentMermaidTheme() });
+        mermaid.run({ nodes: nodes });
+      }
+
+      document.addEventListener("DOMContentLoaded", function () {
+        renderMermaidIn(document.body);
       });
 
-      // Doc modal resize button — toggles between the default reading-
-      // column width (sm:max-w-3xl, set in partials/data_shell.html) and
-      // .doc-modal--expanded (input.css) for docs with wide diagrams/tables.
-      // Persisted so the choice survives closing/reopening a doc, and
-      // reapplied after htmx:afterSwap below since a company/tab switch
-      // recreates the <dialog> from the server template's default class.
-      function isDocModalExpanded() {
-        return localStorage.getItem("docModalExpanded") === "1";
-      }
-      function applyDocModalExpanded(expanded) {
-        var dialog = document.getElementById("doc-modal");
-        if (!dialog) return;
-        dialog.classList.toggle("doc-modal--expanded", expanded);
-        var expandIcon = document.getElementById("doc-modal-expand-icon");
-        var collapseIcon = document.getElementById("doc-modal-collapse-icon");
-        if (expandIcon) expandIcon.classList.toggle("hidden", expanded);
-        if (collapseIcon) collapseIcon.classList.toggle("hidden", !expanded);
-      }
-      function toggleDocModalSize() {
-        var expanded = !isDocModalExpanded();
-        localStorage.setItem("docModalExpanded", expanded ? "1" : "0");
-        applyDocModalExpanded(expanded);
-      }
-
       document.body.addEventListener("htmx:afterSwap", function (evt) {
-        var target = evt.detail.target;
-        if (!target) return;
-        if (target.id === "doc-modal-body") {
-          // Re-read the theme here rather than trusting the initialize()
-          // call above — that one only ran once at page load, so a diagram
-          // opened after a later dark-mode toggle would otherwise render
-          // with stale (mismatched) colors against the current page theme.
-          mermaid.initialize({
-            startOnLoad: false,
-            theme: document.documentElement.classList.contains("dark") ? "dark" : "default",
-          });
-          mermaid.run({ querySelector: "#doc-modal-body .mermaid" });
-          applyDocModalExpanded(isDocModalExpanded());
-        }
-        if (target.id === "data-shell" || target.querySelector("#doc-modal")) {
-          applyDocModalExpanded(isDocModalExpanded());
-        }
+        renderMermaidIn(evt.detail.target);
       });
 
       // Click on the <dialog> backdrop (not its content) closes it — native
       // <dialog> only auto-closes on Escape by default.
       document.addEventListener("click", function (evt) {
-        var dialog = document.getElementById("doc-modal");
+        var dialog = document.getElementById("preview-modal");
         if (dialog && evt.target === dialog) dialog.close();
       });
     </script>

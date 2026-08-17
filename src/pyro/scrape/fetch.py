@@ -1,4 +1,4 @@
-"""Playwright-rendered HTML fetch (plan.md 'Raw Phase' — client-side rendering)."""
+"""Playwright-rendered HTML fetch (docs/architecture.md, "The layers" — Ingestion; client-side rendering)."""
 
 from __future__ import annotations
 

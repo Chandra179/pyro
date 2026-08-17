@@ -12,16 +12,8 @@
 # 1. Business / product configuration
 # ============================================================================
 
-# "structured" (default): schema-validated extraction + grouped batch synthesis per
-# domain. "freeform": no domain grouping — each article is routed into an existing
-# or new topic file instead.
-pipeline_mode: "freeform"
-
-# freeform mode only: "summary" (default) routes on the LLM-generated extraction
-# summary; "cleaned_text" routes on the article's full cleaned text instead.
-freeform_route_source: "cleaned_text"
-
-# Fixed domain taxonomy (structured mode only). "Other" is the required fallback.
+# Fixed domain taxonomy, tagged on extracted entities/relationships as a shared axis for a
+# future cross-company comparison feature. "Other" is the required fallback.
 domains:
   - Authentication
   - Recommendation Engine
@@ -33,27 +25,12 @@ domains:
   - Media/Content Pipeline
   - Other
 
-# Prompt template paths, relative to the top-level prompts/ dir. Swap a field to a
-# different file to change that prompt, picked up at runtime.
-prompts:
-  extraction_system: "extraction/structured/default/system.md"
-  extraction_user: "extraction/structured/default/user.md"
-  synthesis_system: "synthesis/structured/default/system.md"
-  synthesis_user: "synthesis/structured/default/user.md"
-  synthesis_batch_system: "synthesis/structured/default/batch_system.md"
-  synthesis_batch_user: "synthesis/structured/default/batch_user.md"
-  extraction_freeform_system: "extraction/freeform/default/system.md"
-  extraction_freeform_user: "extraction/freeform/default/user.md"
-  synthesis_freeform_route_system: "synthesis/freeform/default/route_system.md"
-  synthesis_freeform_route_user: "synthesis/freeform/default/route_user.md"
-
 # ============================================================================
 # 2. TEMPORARY dev/test overrides — revert before a real run
 # ============================================================================
 
-# Caps synthesis for cheap local test runs. Remove/raise once prompts are stable.
-synthesis_batch_size: 2
-synthesis_article_limit: 100
+# Caps graph-merge calls for cheap local test runs. Remove/raise once prompts are stable.
+graph_article_limit: 100
 
 # ============================================================================
 # 3. System / infrastructure overrides — only where these differ from config.py
@@ -67,8 +44,8 @@ extraction_concurrency: 1
 # (see router._max_tokens_for) — raised well above the code default (2000).
 extraction_max_tokens: 100000
 
-# Not the current setup (TokenRouter only) — see synthesis_model_params() in router.py.
-synthesis_model: "deepseek/deepseek-v4-flash-0731"
+# Not the current setup (TokenRouter only) — see graph_model_params() in router.py.
+graph_model: "deepseek/deepseek-v4-flash-0731"
 
 router:
   # Per-request cap so a stalled model raises a timeout and triggers fallback —

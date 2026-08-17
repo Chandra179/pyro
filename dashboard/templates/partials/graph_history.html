@@ -1,0 +1,50 @@
+{% from "partials/_macros.html" import badge %}
+{#
+  Rendered inline in job_status.html (initial paint) and re-fetched wholesale by its own
+  hx-get below while the job is merging — kept separate from the outer job card's 2s poll so a
+  per-call streaming cadence (1s) doesn't force a full card re-render. Once the job leaves
+  "merging" the polling attrs disappear (server stops including them) and the last fetched
+  state just sits there as history.
+#}
+<div
+  id="graph-history-{{ job.id }}"
+  {% if job.status == "merging" %}
+  hx-get="/jobs/{{ job.id }}/graph-history"
+  hx-trigger="every 1s"
+  hx-swap="outerHTML"
+  {% endif %}
+  class="mt-3 border-t border-slate-200 pt-3 dark:border-slate-800"
+>
+  <p class="mb-2 text-[10px] uppercase tracking-wide text-slate-400 dark:text-slate-600">
+    Graph merge history
+  </p>
+  <div class="flex flex-col gap-2">
+    {% for call in job.graph_history | reverse %}
+    <div class="rounded border border-slate-200 bg-slate-50 p-2 text-xs dark:border-slate-800 dark:bg-slate-950/40">
+      <div class="flex items-center justify-between gap-2">
+        <span class="truncate font-medium">{{ call.label }}</span>
+        {% if call.error %}
+          {{ badge("failed", "rose") }}
+        {% elif call.done %}
+          {{ badge("done", "emerald") }}
+        {% else %}
+          {{ badge("streaming", "amber", pulse=true) }}
+        {% endif %}
+      </div>
+      {% if call.model %}
+      <p class="mt-0.5 text-[10px] text-slate-400 dark:text-slate-600">{{ call.model }}</p>
+      {% endif %}
+      {% if call.reasoning %}
+      <details class="mt-1">
+        <summary class="cursor-pointer text-slate-400 dark:text-slate-500">thinking</summary>
+        <pre class="mt-1 max-h-32 overflow-y-auto whitespace-pre-wrap text-slate-500 dark:text-slate-400">{{ call.reasoning }}</pre>
+      </details>
+      {% endif %}
+      <pre class="mt-1 max-h-40 overflow-y-auto whitespace-pre-wrap text-slate-600 dark:text-slate-300">{{ call.content }}</pre>
+      {% if call.error %}
+      <p class="mt-1 text-rose-500 dark:text-rose-400">{{ call.error }}</p>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+</div>

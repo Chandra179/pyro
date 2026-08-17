@@ -12,11 +12,3 @@ def extraction_system_prompt(settings: Settings) -> str:
 
 def extraction_user_prompt(settings: Settings) -> str:
     return load_prompt(settings.prompts.extraction_user)
-
-
-def extraction_freeform_system_prompt(settings: Settings) -> str:
-    return load_prompt(settings.prompts.extraction_freeform_system)
-
-
-def extraction_freeform_user_prompt(settings: Settings) -> str:
-    return load_prompt(settings.prompts.extraction_freeform_user)

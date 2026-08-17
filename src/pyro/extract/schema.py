@@ -1,51 +1,58 @@
-"""Simple extraction schema: what an article is about, the problem, the solution, and its domain."""
+"""Entity/relationship extraction schema: what systems an article says exist, and how they
+relate — the raw material a later graph-merge pass (see docs/architecture.md once rewritten)
+resolves across articles into one company-wide diagram."""
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from typing import Literal
 
 from pydantic import BaseModel
 
 from pyro.config import Settings
 
-# Fixed domain taxonomy (config/config.yaml: `domains`) so classification stays
-# consistent across articles instead of the LLM inventing free-form labels per
-# call. "Other" is the required fallback for anything that doesn't fit. Kept
-# as a module-level default so callers (and tests) that don't have a Settings
-# instance handy still get sane behavior.
+# Reused as a tag on entities/relationships, not a classifier anymore — kept specifically so a
+# later cross-company comparison feature has a shared axis to align topics on across companies.
 DOMAINS: list[str] = Settings().domains
 
+EntityKind = Literal["service", "datastore", "queue", "external_system", "team"]
 
-class ExtractedFacts(BaseModel):
+
+class ExtractedEntity(BaseModel):
+    name: str
+    kind: EntityKind = "service"
     domain: str = "Other"
-    topic: str = ""
-    problem: str = ""
-    solution: str = ""
 
 
-def merge_facts(
-    facts_list: list[ExtractedFacts], domains: list[str] = DOMAINS
-) -> ExtractedFacts:
-    """Merge per-chunk extraction results for one article."""
-    if not facts_list:
-        return ExtractedFacts()
-
-    domain = next((f.domain for f in facts_list if f.domain in domains), "Other")
-
-    return ExtractedFacts(
-        domain=domain,
-        topic=_join_unique(f.topic for f in facts_list),
-        problem=_join_unique(f.problem for f in facts_list),
-        solution=_join_unique(f.solution for f in facts_list),
-    )
+class ExtractedRelationship(BaseModel):
+    source: str
+    target: str
+    relation: str
+    as_of: str | None = None
 
 
-def _join_unique(parts: Iterable[str]) -> str:
-    seen: set[str] = set()
-    result: list[str] = []
-    for part in parts:
-        part = part.strip()
-        if part and part not in seen:
-            seen.add(part)
-            result.append(part)
-    return " ".join(result)
+class ExtractedGraph(BaseModel):
+    entities: list[ExtractedEntity] = []
+    relationships: list[ExtractedRelationship] = []
+
+
+def merge_graph_chunks(chunks: list[ExtractedGraph]) -> ExtractedGraph:
+    """Merge per-chunk extraction results for one article. Entities are deduped by
+    case-insensitive name and relationships by (source, target, relation) — cheap, since within
+    one article the same system is almost always mentioned with the same name across its own
+    chunks. Reconciling names *across different articles* is a separate, harder concern handled
+    by the graph-merge pass, not here."""
+    entities: dict[str, ExtractedEntity] = {}
+    for chunk in chunks:
+        for entity in chunk.entities:
+            key = entity.name.strip().lower()
+            if key and key not in entities:
+                entities[key] = entity
+
+    relationships: dict[tuple[str, str, str], ExtractedRelationship] = {}
+    for chunk in chunks:
+        for rel in chunk.relationships:
+            key = (rel.source.strip().lower(), rel.target.strip().lower(), rel.relation.strip().lower())
+            if key[0] and key[1] and key not in relationships:
+                relationships[key] = rel
+
+    return ExtractedGraph(entities=list(entities.values()), relationships=list(relationships.values()))

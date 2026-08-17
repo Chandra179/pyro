@@ -1,7 +1,6 @@
 {#
-  Swapped into #doc-modal-body (see partials/data_shell.html) when an extraction table row's
-  View button is clicked — reuses the same modal shell as the synthesis doc viewer since it's
-  the same "inspect one record" interaction, just over the articles collection instead of docs.
+  Swapped into #preview-modal-body (see partials/data_shell.html) when an extraction table
+  row's View button is clicked.
 #}
 <div class="flex shrink-0 items-center justify-between gap-4 border-b border-slate-200 px-6 py-4 dark:border-slate-800">
   <div class="min-w-0">
@@ -13,7 +12,7 @@
   <div class="flex shrink-0 items-center gap-2">
     <button
       type="button"
-      onclick="document.getElementById('doc-modal').close()"
+      onclick="document.getElementById('preview-modal').close()"
       aria-label="Close"
       class="rounded-md p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800 dark:hover:text-slate-200"
     >
@@ -31,9 +30,9 @@
     <dd>{{ article.extracted_at[:19] if article.extracted_at else "—" }}</dd>
   </dl>
 
-  {% if article.extracted_facts %}
-  <h4 class="mt-5 mb-2 text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-slate-600">Extracted facts</h4>
-  <pre class="overflow-x-auto rounded-lg bg-slate-50 p-4 text-xs text-slate-700 dark:bg-slate-950 dark:text-slate-300">{{ article.extracted_facts | tojson(indent=2) }}</pre>
+  {% if article.extracted_graph %}
+  <h4 class="mt-5 mb-2 text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-slate-600">Extracted system map</h4>
+  <pre class="overflow-x-auto rounded-lg bg-slate-50 p-4 text-xs text-slate-700 dark:bg-slate-950 dark:text-slate-300">{{ article.extracted_graph | tojson(indent=2) }}</pre>
   {% endif %}
 
   {% if article.cleaned_text %}

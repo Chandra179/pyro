@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Literal
 
 from pydantic import BaseModel
 from pydantic_settings import (
@@ -95,36 +94,26 @@ class SitemapConfig(BaseModel):
 class PromptsConfig(BaseModel):
     """Paths (relative to the top-level prompts/ dir) for each stage's templates.
 
-    Each stage's prompts live under prompts/<stage>/<mode>/<variant>/, e.g.
-    prompts/extraction/structured/default/system.md. "variant" is an arbitrary,
-    growable set of alternate prompt styles for that stage+mode (see
-    pyro.prompts.list_variants) — swap in an alternate one by pointing these
-    fields at a different variant dir, no code change needed, and picked up at
-    runtime (see pyro.prompts.load_prompt). build_prompts_config() constructs
-    this from a (mode, extraction_variant, synthesis_variant) choice, which is
-    what the dashboard uses to let a run pick its templates.
+    Extraction prompts live under prompts/extraction/<variant>/, e.g.
+    prompts/extraction/default/system.md — "variant" is a growable set of alternate prompt
+    styles for extraction (see pyro.prompts.list_variants). Which variant backs a given run is
+    configurable (see build_prompts_config below), which is what the dashboard uses to let a
+    run pick its extraction template. The graph-merge prompt has no variant concept (v1 is a
+    single fixed template, not user-selectable) — see prompts/merge/.
     """
 
-    extraction_system: str = "extraction/structured/default/system.md"
-    extraction_user: str = "extraction/structured/default/user.md"
-    synthesis_system: str = "synthesis/structured/default/system.md"
-    synthesis_user: str = "synthesis/structured/default/user.md"
-    synthesis_batch_system: str = "synthesis/structured/default/batch_system.md"
-    synthesis_batch_user: str = "synthesis/structured/default/batch_user.md"
-
-    # "freeform" mode: no schema, no domain grouping (see pipeline_mode below).
-    extraction_freeform_system: str = "extraction/freeform/default/system.md"
-    extraction_freeform_user: str = "extraction/freeform/default/user.md"
-    # Routes each article to an existing topic file (update) or a new one (create).
-    synthesis_freeform_route_system: str = "synthesis/freeform/default/route_system.md"
-    synthesis_freeform_route_user: str = "synthesis/freeform/default/route_user.md"
+    extraction_system: str = "extraction/default/system.md"
+    extraction_user: str = "extraction/default/user.md"
+    merge_system: str = "merge/system.md"
+    merge_user: str = "merge/user.md"
 
 
 class ArangoConfig(BaseModel):
     host: str = "http://localhost:8529"
     database: str = "pyro"
     articles_collection: str = "articles"
-    docs_collection: str = "docs"
+    entities_collection: str = "entities"
+    relationships_collection: str = "relationships"
 
 
 class CleanConfig(BaseModel):
@@ -188,25 +177,16 @@ class Settings(BaseSettings):
     # Code block collapsing.
     code_block_line_threshold: int = 15
 
-    # "structured": schema-validated extraction, grouped batch synthesis per
-    # domain (default). "freeform": no schema/domain grouping — extraction is
-    # plain text, and each article is immediately routed into an existing or
-    # new topic file instead of a separate batch synthesis pass.
-    pipeline_mode: Literal["structured", "freeform"] = "structured"
+    # Graph-merge pass: reconciles each article's extracted entities/relationships against the
+    # company's entity graph so far. Single fixed high-capability model (same reasoning as the
+    # old synthesis_model), not part of the extraction cascade.
+    graph_model: str = "openrouter/nvidia/nemotron-3-super-120b-a12b:free"
+    graph_max_tokens: int = 8000
+    # Temporary cap on articles merged per run, for cheap test runs.
+    graph_article_limit: int | None = None
 
-    # Freeform mode only: what routing/synthesis reads for each article. "summary" (default)
-    # uses the LLM-generated extraction summary; "cleaned_text" skips the summarization step's
-    # output and feeds the article's full cleaned text straight into routing instead.
-    freeform_route_source: Literal["summary", "cleaned_text"] = "summary"
-
-    # Synthesis batching.
-    synthesis_batch_size: int = 50
-    synthesis_model: str = "openrouter/nvidia/nemotron-3-super-120b-a12b:free"
-    synthesis_max_tokens: int = 16000
-    # Temporary cap on total articles fed into synthesis, for cheap test runs.
-    synthesis_article_limit: int | None = None
-
-    # Fixed domain taxonomy for extraction classification.
+    # Fixed domain taxonomy, tagged on extracted entities/relationships — kept as a shared axis
+    # for a future cross-company comparison feature, not used to classify/group anymore.
     domains: list[str] = [
         "Authentication",
         "Recommendation Engine",

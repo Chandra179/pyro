@@ -11,7 +11,7 @@
   "scraping": "amber",
   "cleaning": "amber",
   "extracting": "amber",
-  "synthesizing": "amber",
+  "merging": "amber",
   "done": "emerald",
   "error": "rose",
 } %}
@@ -36,7 +36,7 @@
         {% endif %}
       </p>
       <p class="mt-1 text-[10px] uppercase tracking-wide text-slate-400 dark:text-slate-600">
-        {{ job.pipeline_mode }} · extraction: {{ job.extraction_variant }} · synthesis: {{ job.synthesis_variant }}
+        extraction template: {{ job.extraction_variant }}
       </p>
     </div>
     {{ badge(job.status_label, status_variants[job.status], pulse=not job.is_finished) }}
@@ -48,5 +48,8 @@
   {% endif %}
   {% if job.error %}
   <p class="mt-2 text-xs text-rose-500 dark:text-rose-400">{{ job.error }}</p>
+  {% endif %}
+  {% if job.graph_history %}
+  {% include "partials/graph_history.html" %}
   {% endif %}
 </div>

@@ -16,17 +16,16 @@ from fastapi.templating import Jinja2Templates
 
 from api.data import (
     delete_all_articles,
-    delete_all_docs,
     delete_article,
-    delete_doc,
+    delete_graph,
     get_article,
-    get_doc,
     get_extraction,
-    get_synthesis,
+    get_graph,
     list_companies,
 )
+from api.graph_view import build_graph_mermaid
 from api.jobs import JOBS, list_jobs, submit_job
-from api.render import render_markdown
+from api.render import render_mermaid
 from pyro.prompts import list_variants
 
 load_dotenv()
@@ -43,19 +42,10 @@ templates = Jinja2Templates(directory=str(_DASHBOARD_DIR / "templates"))
 
 
 def _template_choices() -> list[dict]:
-    """Selectable prompt templates for the run form's single "Prompt templates" dropdown.
-
-    Extraction and synthesis are always chosen together as one pair, keyed by mode — there's
-    only ever a "default" variant per stage today, so a single mode choice fully determines both
-    stages' prompt files. If per-stage variants beyond "default" show up later, this needs to
-    grow back into a picker per stage; until then, one dropdown is all the real choice there is.
-    """
-    return [
-        {"value": mode, "label": mode.capitalize()}
-        for mode in ("structured", "freeform")
-        if "default" in list_variants("extraction", mode)
-        and "default" in list_variants("synthesis", mode)
-    ]
+    """Selectable extraction prompt variants for the run form's "Prompt template" dropdown —
+    there's only ever a "default" variant today, but this stays data-driven so a new variant
+    directory under prompts/extraction/ shows up automatically, no code change needed."""
+    return [{"value": v, "label": v.capitalize()} for v in list_variants("extraction")]
 
 
 def _template_options() -> dict:
@@ -72,8 +62,8 @@ def index(request: Request) -> HTMLResponse:
 
 
 def _resolve_template(raw: str) -> str:
-    """Validate the submitted mode against the real template choices and return it. Raises 400
-    rather than trusting it directly, since it's joined into file paths downstream
+    """Validate the submitted variant against the real template choices and return it. Raises
+    400 rather than trusting it directly, since it's joined into file paths downstream
     (build_prompts_config)."""
     valid = {c["value"] for c in _template_choices()}
     if raw not in valid:
@@ -87,13 +77,11 @@ def create_job(
     company_name: str = Form(...),
     url: str = Form(...),
     limit: int | None = Form(None),
-    template: str = Form("structured"),
+    template: str = Form("default"),
 ) -> HTMLResponse:
-    mode = _resolve_template(template)
+    variant = _resolve_template(template)
 
-    job = submit_job(
-        company_name.strip(), url.strip(), limit, mode, "default", "default"
-    )
+    job = submit_job(company_name.strip(), url.strip(), limit, variant)
     return templates.TemplateResponse(request, "partials/job_status.html", {"job": job})
 
 
@@ -105,15 +93,28 @@ def job_status(request: Request, job_id: str) -> HTMLResponse:
     return templates.TemplateResponse(request, "partials/job_status.html", {"job": job})
 
 
+@app.get("/jobs/{job_id}/graph-history", response_class=HTMLResponse)
+def job_graph_history(request: Request, job_id: str) -> HTMLResponse:
+    """Polled every 1s (see partials/graph_history.html) while a job is merging, to show each
+    LLM call's output streaming in — separately from the outer job card's slower 2s stage poll,
+    since this needs finer granularity only during that one stage."""
+    job = JOBS.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="job not found")
+    return templates.TemplateResponse(
+        request, "partials/graph_history.html", {"job": job}
+    )
+
+
 def _data_context(company: str | None, view: str) -> dict:
-    view = view if view in ("extraction", "synthesis") else "extraction"
+    view = view if view in ("extraction", "graph") else "extraction"
     try:
         companies = list_companies()
         selected = (
             company if company in companies else (companies[0] if companies else None)
         )
         articles = get_extraction(selected) if selected else []
-        docs = get_synthesis(selected) if selected else []
+        graph = get_graph(selected) if selected else {"entities": [], "relationships": []}
     except Exception as exc:
         logger.exception("Data view failed to load from the database")
         return {
@@ -121,15 +122,18 @@ def _data_context(company: str | None, view: str) -> dict:
             "selected": None,
             "view": view,
             "articles": [],
-            "docs": [],
+            "graph": {"entities": [], "relationships": []},
+            "graph_html": None,
             "db_error": str(exc),
         }
+    graph_source = build_graph_mermaid(graph["entities"], graph["relationships"])
     return {
         "companies": companies,
         "selected": selected,
         "view": view,
         "articles": articles,
-        "docs": docs,
+        "graph": graph,
+        "graph_html": render_mermaid(graph_source) if graph_source else None,
         "db_error": None,
     }
 
@@ -149,18 +153,6 @@ def data_panel(
 ) -> HTMLResponse:
     return templates.TemplateResponse(
         request, "partials/data_panel.html", _data_context(company, view)
-    )
-
-
-@app.get("/data/doc/{doc_key}", response_class=HTMLResponse)
-def doc_preview(request: Request, doc_key: str, company: str) -> HTMLResponse:
-    doc = get_doc(company, doc_key)
-    if doc is None:
-        raise HTTPException(status_code=404, detail="doc not found")
-    return templates.TemplateResponse(
-        request,
-        "partials/doc_modal.html",
-        {"doc": doc, "content_html": render_markdown(doc["content"])},
     )
 
 
@@ -194,23 +186,11 @@ def delete_all_articles_route(
     )
 
 
-@app.delete("/data/doc/{doc_key}", response_class=HTMLResponse)
-def delete_doc_route(
-    request: Request, doc_key: str, company: str, view: str = "synthesis"
+@app.delete("/data/graph", response_class=HTMLResponse)
+def delete_graph_route(
+    request: Request, company: str, view: str = "graph"
 ) -> HTMLResponse:
-    delete_doc(company, doc_key)
+    delete_graph(company)
     return templates.TemplateResponse(
         request, "partials/data_panel.html", _data_context(company, view)
     )
-
-
-@app.delete("/data/docs", response_class=HTMLResponse)
-def delete_all_docs_route(
-    request: Request, company: str, view: str = "synthesis"
-) -> HTMLResponse:
-    delete_all_docs(company)
-    return templates.TemplateResponse(
-        request, "partials/data_panel.html", _data_context(company, view)
-    )
-
-

@@ -1,4 +1,5 @@
-"""URL normalization for SQLite dedup keys (plan.md section 2)."""
+"""URL normalization for ArangoDB dedup keys — the result becomes an article's `_key` (see
+docs/architecture.md, "The layers" — Ingestion)."""
 
 import re
 from urllib.parse import urlsplit

@@ -1,4 +1,4 @@
-"""Token-threshold chunking with overlap for outlier posts (plan.md 'Cleaning & Chunking Phase')."""
+"""Token-threshold chunking with overlap for outlier posts (docs/architecture.md, "The layers" — Cleaning)."""
 
 from __future__ import annotations
 

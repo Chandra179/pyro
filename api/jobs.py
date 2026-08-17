@@ -1,6 +1,6 @@
 """In-memory pipeline job tracking for the dashboard.
 
-Each submitted job runs scrape -> clean -> extract -> synthesize on a background
+Each submitted job runs scrape -> clean -> extract -> merge-graph on a background
 thread (the underlying `_*_impl` functions are sync and call `asyncio.run`
 internally, so they need their own thread rather than the request's event loop).
 State lives in a process-local dict — fine for a single-instance dev dashboard,
@@ -16,26 +16,75 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Literal
 
-from pyro.cli import _clean_impl, _extract_impl, _synthesize_impl
+from pyro.cli import _clean_impl, _extract_impl, _merge_graph_impl
 from pyro.config import Settings
 from pyro.db import open_db_from_settings
-from pyro.prompts import PipelineMode, build_prompts_config
+from pyro.graph.merge import GraphReporter
+from pyro.prompts import build_prompts_config
 from pyro.scrape.fetch import scrape_urls
 from pyro.scrape.sitemap import fetch_sitemap_urls
 
 JobStatus = Literal[
-    "pending", "scraping", "cleaning", "extracting", "synthesizing", "done", "error"
+    "pending", "scraping", "cleaning", "extracting", "merging", "done", "error"
 ]
 
 _STAGE_LABELS: dict[JobStatus, str] = {
     "pending": "Queued",
     "scraping": "Scraping",
     "cleaning": "Cleaning HTML",
-    "extracting": "Extracting architecture facts",
-    "synthesizing": "Synthesizing docs",
+    "extracting": "Extracting system map",
+    "merging": "Merging into graph",
     "done": "Done",
     "error": "Failed",
 }
+
+
+@dataclass
+class GraphMergeCall:
+    """One LLM call within a merge run, as seen by the dashboard. `content`/`reasoning` are
+    properties over accumulated chunk lists rather than strings appended to directly — `+=` on
+    an attribute copies the whole string each time (unlike CPython's in-place-resize
+    optimization for a local variable), which would make a fully streamed response O(n^2) in
+    its length; appending to a list and joining on read keeps chunk accumulation O(n) and only
+    pays the join cost when a template actually renders (a few times a second, not per chunk)."""
+
+    label: str
+    model: str = ""
+    done: bool = False
+    error: str | None = None
+    content_parts: list[str] = field(default_factory=list)
+    reasoning_parts: list[str] = field(default_factory=list)
+
+    @property
+    def content(self) -> str:
+        return "".join(self.content_parts)
+
+    @property
+    def reasoning(self) -> str:
+        return "".join(self.reasoning_parts)
+
+
+class JobGraphReporter(GraphReporter):
+    """Appends each merge call's streamed output onto job.graph_history, so the dashboard can
+    render it live (while streaming) and afterward (as history) from the same list. Mutated
+    from the job's background thread; read from the request thread — unsynchronized, same
+    tradeoff Job.status already accepts for this process-local, single-instance store."""
+
+    def __init__(self, job: Job) -> None:
+        self.job = job
+
+    def start_call(self, label: str, model: str) -> None:
+        self.job.graph_history.append(GraphMergeCall(label=label, model=model))
+
+    def on_chunk(self, content: str, reasoning: str) -> None:
+        call = self.job.graph_history[-1]
+        call.content_parts.append(content)
+        call.reasoning_parts.append(reasoning)
+
+    def end_call(self, error: str | None = None) -> None:
+        call = self.job.graph_history[-1]
+        call.done = True
+        call.error = error
 
 
 @dataclass
@@ -44,9 +93,7 @@ class Job:
     company_name: str
     url: str
     limit: int | None
-    pipeline_mode: PipelineMode
     extraction_variant: str
-    synthesis_variant: str
     status: JobStatus = "pending"
     error: str | None = None
     # "sitemap" (a whole blog crawled from its sitemap.xml) or "article" (a
@@ -54,6 +101,7 @@ class Job:
     source_kind: Literal["sitemap", "article"] | None = None
     discovered_count: int | None = None
     scraped_count: int | None = None
+    graph_history: list[GraphMergeCall] = field(default_factory=list)
     created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
 
     @property
@@ -84,12 +132,7 @@ async def _resolve_urls(
 
 
 def _run_job(job: Job) -> None:
-    settings = Settings(
-        pipeline_mode=job.pipeline_mode,
-        prompts=build_prompts_config(
-            job.pipeline_mode, job.extraction_variant, job.synthesis_variant
-        ),
-    )
+    settings = Settings(prompts=build_prompts_config(job.extraction_variant))
     try:
         job.status = "scraping"
         urls, source_kind = asyncio.run(_resolve_urls(job.url, settings))
@@ -110,8 +153,12 @@ def _run_job(job: Job) -> None:
         _clean_impl(settings=settings)
         job.status = "extracting"
         _extract_impl(settings=settings)
-        job.status = "synthesizing"
-        _synthesize_impl(job.company_name, settings=settings)
+        job.status = "merging"
+        _merge_graph_impl(
+            job.company_name,
+            settings=settings,
+            reporter=JobGraphReporter(job),
+        )
         job.status = "done"
     except Exception as exc:
         job.status = "error"
@@ -122,18 +169,14 @@ def submit_job(
     company_name: str,
     url: str,
     limit: int | None,
-    pipeline_mode: PipelineMode,
     extraction_variant: str,
-    synthesis_variant: str,
 ) -> Job:
     job = Job(
         id=str(uuid.uuid4()),
         company_name=company_name,
         url=url,
         limit=limit,
-        pipeline_mode=pipeline_mode,
         extraction_variant=extraction_variant,
-        synthesis_variant=synthesis_variant,
     )
     JOBS[job.id] = job
     threading.Thread(target=_run_job, args=(job,), daemon=True).start()

@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""One-file pipeline runner: scrape -> clean -> extract -> synthesize.
+"""One-file pipeline runner: scrape -> clean -> extract -> merge-graph.
 
 Edit the constants below to point at a different company/blog, then run it
 via `make run` or `uv run python run_pipeline.py`.
 
-Tuning knobs (model cascade, concurrency, chunking, cleaning, synthesis
-batching, etc.) default to config/config.yaml — override any of them here via
+Tuning knobs (model cascade, concurrency, chunking, cleaning, graph-merge
+model, etc.) default to config/config.yaml — override any of them here via
 OVERRIDES instead of editing that file. Field names/nesting match
 src/pyro/config.py:Settings, e.g. {"extraction_concurrency": 2} or
 {"scrape": {"concurrency": 3}}.
@@ -23,7 +23,7 @@ CONCURRENCY = None  # None -> config/config.yaml's scrape.concurrency
 # --- Config overrides (optional) — only set the keys you want to change ---
 OVERRIDES: dict = {
     # "extraction_concurrency": 2,
-    # "synthesis_model": "openrouter/nvidia/nemotron-3-super-120b-a12b:free",
+    # "graph_model": "openrouter/nvidia/nemotron-3-super-120b-a12b:free",
 }
 
 if __name__ == "__main__":

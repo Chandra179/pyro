@@ -25,7 +25,7 @@ def test_data_page_shows_db_error_without_raising(monkeypatch):
 def test_data_page_lists_companies_and_defaults_to_extraction(monkeypatch):
     monkeypatch.setattr(main, "list_companies", lambda: ["Netflix", "Stripe"])
     monkeypatch.setattr(main, "get_extraction", lambda company: [])
-    monkeypatch.setattr(main, "get_synthesis", lambda company: [])
+    monkeypatch.setattr(main, "get_graph", lambda company: {"entities": [], "relationships": []})
     client = TestClient(main.app)
     resp = client.get("/data")
     assert resp.status_code == 200
@@ -36,11 +36,29 @@ def test_data_page_lists_companies_and_defaults_to_extraction(monkeypatch):
 def test_data_panel_respects_selected_company_and_view(monkeypatch):
     monkeypatch.setattr(main, "list_companies", lambda: ["Netflix", "Stripe"])
     monkeypatch.setattr(main, "get_extraction", lambda company: [])
-    monkeypatch.setattr(main, "get_synthesis", lambda company: [])
+    monkeypatch.setattr(main, "get_graph", lambda company: {"entities": [], "relationships": []})
     client = TestClient(main.app)
-    resp = client.get("/data/panel", params={"company": "Stripe", "view": "synthesis"})
+    resp = client.get("/data/panel", params={"company": "Stripe", "view": "graph"})
     assert resp.status_code == 200
-    assert "Synthesized docs · Stripe" in resp.text
+    assert "Entity graph · Stripe" in resp.text
+
+
+def test_data_panel_renders_mermaid_diagram_when_graph_has_entities(monkeypatch):
+    monkeypatch.setattr(main, "list_companies", lambda: ["Netflix"])
+    monkeypatch.setattr(main, "get_extraction", lambda company: [])
+    monkeypatch.setattr(
+        main,
+        "get_graph",
+        lambda company: {
+            "entities": [{"name": "Cassandra", "kind": "datastore", "domain": "Data Platform"}],
+            "relationships": [],
+        },
+    )
+    client = TestClient(main.app)
+    resp = client.get("/data/panel", params={"company": "Netflix", "view": "graph"})
+    assert resp.status_code == 200
+    assert 'class="not-prose mermaid"' in resp.text
+    assert "Cassandra" in resp.text
 
 
 def test_data_shell_reachable_via_hx_select_target():
