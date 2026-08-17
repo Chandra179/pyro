@@ -26,7 +26,7 @@ from pydantic import BaseModel, ValidationError
 from pyro.config import Settings
 from pyro.db import Article, Database
 from pyro.graph.prompts import merge_system_prompt, merge_user_prompt
-from pyro.graph.resolve import candidate_names, resolve_known_names
+from pyro.graph.resolve import KnownNames, candidate_names
 from pyro.router import graph_model_params, stream_with_rate_limit_retry
 
 logger = logging.getLogger(__name__)
@@ -140,7 +140,9 @@ async def _resolve_names(
     }
 
 
-async def _merge_article(db: Database, article: Article, ctx: GraphMergeContext) -> None:
+async def _merge_article(
+    db: Database, article: Article, ctx: GraphMergeContext, known: KnownNames
+) -> None:
     graph = article.extracted_graph or {}
     entities = graph.get("entities") or []
     relationships = graph.get("relationships") or []
@@ -148,10 +150,8 @@ async def _merge_article(db: Database, article: Article, ctx: GraphMergeContext)
         db.mark_graph_merged(article.id)
         return
 
-    existing_names = db.list_entity_names(ctx.company_name)
-    mapping, unresolved = resolve_known_names(
+    mapping, unresolved = known.resolve(
         [e["name"] for e in entities],
-        existing_names,
         threshold=ctx.settings.graph_fuzzy_threshold,
     )
     if unresolved:
@@ -159,7 +159,7 @@ async def _merge_article(db: Database, article: Article, ctx: GraphMergeContext)
             unresolved,
             entities,
             candidate_names(
-                unresolved, existing_names, limit=ctx.settings.graph_candidate_names_limit
+                unresolved, known.names, limit=ctx.settings.graph_candidate_names_limit
             ),
             article.title or article.source_url,
             ctx,
@@ -185,6 +185,8 @@ async def _merge_article(db: Database, article: Article, ctx: GraphMergeContext)
             alias=name if canonical_name != name else None,
             first_seen_article_id=article.id,
         )
+        # So the next article in this run sees it too, without a re-fetch from the DB.
+        known.add(canonical_name)
 
     for rel in relationships:
         db.upsert_relationship(
@@ -227,9 +229,10 @@ async def run_graph_merge(
         graph_model_params(settings),
         reporter or GraphReporter(),
     )
+    known = KnownNames(db.list_entity_names(company_name))
 
     for article in articles:
-        await _merge_article(db, article, ctx)
+        await _merge_article(db, article, ctx, known)
 
     return {
         "articles_merged": len(articles),

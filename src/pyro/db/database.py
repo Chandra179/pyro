@@ -154,12 +154,6 @@ class Database:
     def list_relationships(self, company_name: str) -> list[dict]:
         return self.relationships.list_all(company_name)
 
-    def neighbors(
-        self, company_name: str, name: str, depth: int = 1, direction: str = "ANY"
-    ) -> list[dict]:
-        """Graph traversal from one entity — see RelationshipRepository.neighbors."""
-        return self.relationships.neighbors(company_name, name, depth, direction)
-
     def delete_graph_for_company(self, company_name: str) -> None:
         """Deletes all entities/relationships for company_name and resets every one of its
         articles' graph_merged_at, so a subsequent merge run treats them as new and rebuilds

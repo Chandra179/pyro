@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Callable
+from dataclasses import dataclass, field
 from typing import TypeVar
 
 from json_repair import repair_json
@@ -82,37 +83,45 @@ def _parse_extracted_graph(raw: str) -> ExtractedGraph:
     return ExtractedGraph.model_validate(parsed)
 
 
+@dataclass(frozen=True)
+class ExtractionRunConfig:
+    """Everything about an extraction run that's fixed once per `extract_article` call and shared
+    across all of that article's chunks — built once so it doesn't get recomputed (or
+    positionally reordered) per chunk in the loop below."""
+
+    model_params: list[dict]
+    system_prompt: str
+    user_template: str
+    settings: Settings
+    domains: list[str] = field(default_factory=lambda: DOMAINS)
+    decoding_params: dict | None = None
+
+
 async def extract_chunk(
     title: str,
     url: str,
     content: str,
-    model_params: list[dict],
-    system_prompt: str,
-    user_template: str,
-    domains: list[str] = DOMAINS,
-    decoding_params: dict | None = None,
-    settings: Settings | None = None,
+    config: ExtractionRunConfig,
 ) -> ExtractedGraph:
-    settings = settings or Settings()
     messages = [
-        {"role": "system", "content": system_prompt},
+        {"role": "system", "content": config.system_prompt},
         {
             "role": "user",
-            "content": user_template.format(
+            "content": config.user_template.format(
                 title=title,
                 url=url,
                 content=content,
-                domains=", ".join(domains),
+                domains=", ".join(config.domains),
                 relations="\n".join(f"- {r}" for r in RELATION_KINDS),
             ),
         },
     ]
     return await _run_model_cascade(
         messages,
-        model_params,
+        config.model_params,
         _parse_extracted_graph,
-        decoding_params,
-        settings,
+        config.decoding_params,
+        config.settings,
         extra_kwargs={"response_format": {"type": "json_object"}},
     )
 
@@ -135,21 +144,15 @@ async def extract_article(
         token_threshold=settings.chunk_token_threshold,
         overlap_tokens=settings.chunk_overlap_tokens,
     )
-    decoding_params = _decoding_params(settings)
-    graphs = [
-        await extract_chunk(
-            title,
-            url,
-            chunk,
-            model_params,
-            system_prompt,
-            user_template,
-            settings.domains,
-            decoding_params,
-            settings,
-        )
-        for chunk in chunks
-    ]
+    config = ExtractionRunConfig(
+        model_params=model_params,
+        system_prompt=system_prompt,
+        user_template=user_template,
+        settings=settings,
+        domains=settings.domains,
+        decoding_params=_decoding_params(settings),
+    )
+    graphs = [await extract_chunk(title, url, chunk, config) for chunk in chunks]
     return merge_graph_chunks(graphs)
 
 

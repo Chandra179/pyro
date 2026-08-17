@@ -4,7 +4,8 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from pyro.extract.pipeline import extract_chunk
+from pyro.config import Settings
+from pyro.extract.pipeline import ExtractionRunConfig, extract_chunk
 from pyro.extract.schema import (
     ExtractedEntity,
     ExtractedGraph,
@@ -17,6 +18,15 @@ def _fake_response(content: str):
     message = SimpleNamespace(content=content)
     choice = SimpleNamespace(message=message)
     return SimpleNamespace(choices=[choice])
+
+
+def _config(model_params: list[dict]) -> ExtractionRunConfig:
+    return ExtractionRunConfig(
+        model_params=model_params,
+        system_prompt="sys",
+        user_template="user {title}",
+        settings=Settings(),
+    )
 
 
 VALID_JSON = json.dumps(
@@ -36,12 +46,7 @@ async def test_first_model_success_no_fallback():
         new=AsyncMock(return_value=_fake_response(VALID_JSON)),
     ) as mock_call:
         graph = await extract_chunk(
-            "t",
-            "u",
-            "c",
-            [{"model": "model-a"}, {"model": "model-b"}],
-            "sys",
-            "user {title}",
+            "t", "u", "c", _config([{"model": "model-a"}, {"model": "model-b"}])
         )
     assert graph.entities[0].name == "Zuul"
     assert mock_call.call_count == 1
@@ -53,12 +58,7 @@ async def test_falls_back_on_malformed_json():
     mock_call = AsyncMock(side_effect=responses)
     with patch("pyro.extract.pipeline.acompletion", new=mock_call):
         graph = await extract_chunk(
-            "t",
-            "u",
-            "c",
-            [{"model": "model-a"}, {"model": "model-b"}],
-            "sys",
-            "user {title}",
+            "t", "u", "c", _config([{"model": "model-a"}, {"model": "model-b"}])
         )
     assert graph.entities[0].name == "Zuul"
     assert mock_call.call_count == 2
@@ -71,12 +71,7 @@ async def test_falls_back_on_schema_invalid_json():
     mock_call = AsyncMock(side_effect=responses)
     with patch("pyro.extract.pipeline.acompletion", new=mock_call):
         graph = await extract_chunk(
-            "t",
-            "u",
-            "c",
-            [{"model": "model-a"}, {"model": "model-b"}],
-            "sys",
-            "user {title}",
+            "t", "u", "c", _config([{"model": "model-a"}, {"model": "model-b"}])
         )
     assert graph.entities[0].name == "Zuul"
     assert mock_call.call_count == 2
@@ -89,9 +84,7 @@ async def test_repairs_markdown_fenced_json():
         "pyro.extract.pipeline.acompletion",
         new=AsyncMock(return_value=_fake_response(fenced)),
     ):
-        graph = await extract_chunk(
-            "t", "u", "c", [{"model": "model-a"}], "sys", "user {title}"
-        )
+        graph = await extract_chunk("t", "u", "c", _config([{"model": "model-a"}]))
     assert graph.entities[0].name == "Zuul"
 
 
@@ -101,12 +94,7 @@ async def test_all_models_fail_raises():
     with patch("pyro.extract.pipeline.acompletion", new=mock_call):
         with pytest.raises(RuntimeError, match="all models in cascade failed"):
             await extract_chunk(
-                "t",
-                "u",
-                "c",
-                [{"model": "model-a"}, {"model": "model-b"}],
-                "sys",
-                "user {title}",
+                "t", "u", "c", _config([{"model": "model-a"}, {"model": "model-b"}])
             )
     assert mock_call.call_count == 2
 

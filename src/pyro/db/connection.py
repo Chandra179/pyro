@@ -75,8 +75,8 @@ _RELATIONSHIP_INDEXES = [
 
 _MIGRATION_HINT = (
     "Collection {name!r} exists as a document collection, but relationships are now stored as "
-    "graph edges (_from/_to) so they can be traversed with AQL. Run `uv run pyro "
-    "migrate-relationships` once to convert it in place — it preserves every existing edge."
+    "graph edges (_from/_to) so they can be traversed with AQL. Recreate it as an edge "
+    "collection (drop and let it be re-bootstrapped, migrating any existing data by hand first)."
 )
 
 # Guards the caches below: job threads (api/jobs.py) and request threads can both reach for a
@@ -157,52 +157,3 @@ def reset_cache() -> None:
         _databases.clear()
         _bootstrapped.clear()
         _clients.clear()
-
-
-def migrate_relationships_to_edges(params: ConnectionParams) -> int:
-    """Convert a pre-existing document-collection `relationships` into an edge collection,
-    preserving its contents. Returns the number of edges migrated.
-
-    Copies every document into a temporary edge collection, deriving `_from`/`_to` from the
-    `source_key`/`target_key` fields the old schema already stored, then swaps the temp collection
-    into the real name. Non-destructive up until the final swap, and a no-op if the collection is
-    already an edge collection.
-    """
-    client = _client_for(params.host)
-    db = client.db(params.database, username=params.username, password=params.password)
-    name = params.relationships_collection
-
-    if not db.has_collection(name):
-        return 0
-    if db.collection(name).properties().get("edge", False):
-        logger.info("%s is already an edge collection; nothing to migrate", name)
-        return 0
-
-    temp_name = f"{name}_edge_migration"
-    if db.has_collection(temp_name):
-        db.delete_collection(temp_name)
-    temp = db.create_collection(temp_name, edge=True)
-
-    entities = params.entities_collection
-    migrated = 0
-    for doc in db.collection(name).all():
-        source_key = doc.get("source_key")
-        target_key = doc.get("target_key")
-        if not source_key or not target_key:
-            logger.warning("skipping relationship %s: missing source/target key", doc.get("_key"))
-            continue
-        payload = {
-            k: v for k, v in doc.items() if k not in ("_id", "_rev", "_from", "_to")
-        }
-        payload["_from"] = f"{entities}/{source_key}"
-        payload["_to"] = f"{entities}/{target_key}"
-        temp.insert(payload, overwrite=True)
-        migrated += 1
-
-    db.delete_collection(name)
-    temp.rename(name)
-    for index in _RELATIONSHIP_INDEXES:
-        db.collection(name).add_index(index)
-    reset_cache()
-    logger.info("migrated %d relationships into edge collection %s", migrated, name)
-    return migrated

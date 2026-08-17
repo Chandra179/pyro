@@ -17,13 +17,6 @@ test:
 lint:
 	uv run ruff check .
 
-# Runs the full pipeline (scrape -> clean -> extract -> merge-graph) for the
-# company/blog configured at the top of run_pipeline.py — edit that file to
-# point at a different blog, or to override config/config.yaml tuning knobs
-# via its OVERRIDES dict. Requires OPENROUTER_API_KEY.
-run:
-	uv run python run_pipeline.py
-
 # htmx + Jinja2 + Tailwind dashboard for submitting sitemap URLs and watching
 # scrape -> clean -> extract -> merge-graph run. Requires db-up + OPENROUTER_API_KEY.
 # CSS/JS are pre-built and committed under dashboard/static/ — you only need

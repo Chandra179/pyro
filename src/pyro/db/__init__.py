@@ -21,7 +21,6 @@ from typing import TYPE_CHECKING
 
 from pyro.db.connection import (
     ConnectionParams,
-    migrate_relationships_to_edges,
     reset_cache,
 )
 from pyro.db.database import Database
@@ -37,7 +36,6 @@ __all__ = [
     "Database",
     "connection_params_from_settings",
     "entity_key",
-    "migrate_relationships_to_edges",
     "open_db",
     "open_db_from_settings",
     "relationship_key",

@@ -2,9 +2,9 @@
 
 This is a real edge collection — every document carries `_from`/`_to` handles into the entities
 collection alongside the denormalized `source`/`target` names the templates render. The
-denormalized names are what the flat list views use; the handles are what make `neighbors()` and
-any future multi-hop question (blast radius, upstream dependencies, cycle detection) a database
-traversal instead of a full scan plus an in-memory graph build.
+denormalized names are what the flat list views use; the handles are what make any future
+multi-hop question (blast radius, upstream dependencies, cycle detection) a database traversal
+instead of a full scan plus an in-memory graph build.
 """
 
 from __future__ import annotations
@@ -70,30 +70,6 @@ class RelationshipRepository:
           RETURN doc
         """
         return self._query(query, company_name=company_name)
-
-    def neighbors(
-        self,
-        company_name: str,
-        name: str,
-        depth: int = 1,
-        direction: str = "ANY",
-    ) -> list[dict]:
-        """Entities reachable from `name` within `depth` hops — a native AQL traversal over the
-        edge collection, so the whole graph never has to be loaded to answer it.
-
-        `direction` is one of OUTBOUND (what this depends on), INBOUND (what depends on this) or
-        ANY. Validated against a literal set because AQL takes the traversal direction as a
-        keyword, not a bind parameter, so it is interpolated into the query text.
-        """
-        if direction not in ("OUTBOUND", "INBOUND", "ANY"):
-            raise ValueError(f"unknown direction: {direction}")
-        start = f"{self._entities}/{entity_key(company_name, name)}"
-        query = f"""
-        FOR vertex, edge IN 1..@depth {direction} @start @@col
-          OPTIONS {{ uniqueVertices: "global", bfs: true }}
-          RETURN DISTINCT {{ entity: vertex, via: edge.relation }}
-        """
-        return self._query(query, start=start, depth=int(depth))
 
     def delete_key(self, key: str) -> None:
         self._col.delete(key, ignore_missing=True)

@@ -10,11 +10,7 @@ from dotenv import load_dotenv
 
 from pyro.clean.clean import clean_html
 from pyro.config import Settings
-from pyro.db import (
-    connection_params_from_settings,
-    migrate_relationships_to_edges,
-    open_db_from_settings,
-)
+from pyro.db import open_db_from_settings
 from pyro.extract.pipeline import run_extraction
 from pyro.graph.backfill import canonicalize_relations
 from pyro.graph.merge import GraphReporter, run_graph_merge
@@ -237,16 +233,6 @@ def canonicalize_relations_cmd(
                 f"{name}: rewrote {result['rewritten']}/{result['examined']} relations "
                 f"({result['collapsed']} duplicate edges collapsed)"
             )
-
-
-@app.command(name="migrate-relationships")
-def migrate_relationships() -> None:
-    """One-off: convert a pre-existing document-collection `relationships` into an ArangoDB edge
-    collection, so the stored graph can be traversed in AQL. Preserves every edge, and is a no-op
-    once it has run. Only needed for databases created before relationships became edges."""
-    settings = Settings()
-    count = migrate_relationships_to_edges(connection_params_from_settings(settings))
-    typer.echo(f"migrated {count} relationships to edges")
 
 
 def _run_all_impl(

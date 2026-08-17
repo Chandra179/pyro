@@ -57,7 +57,11 @@ class ArticleRepository:
         return self._col.has(id)
 
     def mark_cleaned(self, id: str, cleaned_text: str) -> None:
-        self._col.update({"_key": id, "cleaned_text": cleaned_text})
+        """raw_html is cleared here: it's only ever read by the clean stage itself (see
+        _STAGE_FILTERS), so once cleaned_text exists there's no further use for it and it's the
+        largest field on the document. The "clean" stage filter still works after this — its
+        raw_html != null clause only matters while cleaned_text is still null."""
+        self._col.update({"_key": id, "cleaned_text": cleaned_text, "raw_html": None})
 
     def mark_extracted(self, id: str, extracted_graph: dict) -> None:
         self._col.update(
@@ -128,12 +132,14 @@ class ArticleRepository:
 
     def list_articles(self, company_name: str) -> list[Article]:
         """All articles for a company regardless of pipeline stage, newest scrape first.
-        Used by the dashboard's live extraction view."""
+        Used by the dashboard's live extraction view, which polls this every 4s — `raw_html` is
+        dropped from the projection since the view never renders it (only the clean stage reads
+        it, via fetch_unprocessed), and it's by far the largest field on the document."""
         query = """
         FOR doc IN @@col
           FILTER doc.company_name == @company_name
           SORT doc.scraped_at DESC
-          RETURN doc
+          RETURN UNSET(doc, "raw_html")
         """
         return [
             Article.from_doc(d) for d in self._query(query, company_name=company_name)

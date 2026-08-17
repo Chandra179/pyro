@@ -87,7 +87,7 @@ async def graph_history_events(
                 "data": _render(
                     templates,
                     "partials/graph_call.html",
-                    {"job": job, "call": frozen, "index": index},
+                    {"call": frozen, "index": index},
                 ),
             }
             sent_content[index] = len(frozen.content)
