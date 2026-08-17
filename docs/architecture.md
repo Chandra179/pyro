@@ -94,6 +94,12 @@ rather than in parallel. Once a post has been merged, it's remembered as handled
 process genuinely new posts — so a run's cost tracks how many new posts arrived, not how large the
 company's graph has already grown.
 
+A company's graph can only ever have one merge running against it at a time — the dashboard's
+manual trigger, a scheduled run, and a full scrape-through-merge pipeline job all funnel through
+the same lock, keyed by company. A second attempt to merge the same company while one is already
+in flight is rejected outright rather than queued or interleaved, since two merges racing on the
+same graph could each resolve names against a stale view of what the other has already settled.
+
 **Storage.** Three things are tracked, all scoped to the company they belong to so one running
 instance can serve any number of companies without their data mixing: each post's own journey
 through the pipeline (what stage it's reached, what it extracted), the resolved systems, and the
