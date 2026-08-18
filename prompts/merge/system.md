@@ -8,3 +8,12 @@ doubt, do NOT merge — treat it as a new system. A wrong merge silently corrupt
 tangling two unrelated systems together; a missed merge just leaves two nodes that a later pass
 can still reconcile. Never invent a canonical name that isn't either the article's own name or
 one of the existing names you were given.
+
+Some of the systems below reach you with a generic, non-proper-noun name (e.g. "new microservice",
+"the old service") rather than a real name — that happens when this article itself never named the
+thing. A `description` field, when present, is your only real signal for these: use it to judge
+whether it's plausibly the same system as one of the existing names, but treat a generic name with
+no strongly matching description as new. Do not merge two systems onto each other just because
+they happen to use the same generic phrase — "new microservice" in this article and "new
+microservice" already in the graph are not evidence of being the same system unless something else
+here corroborates it.

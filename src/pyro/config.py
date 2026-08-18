@@ -158,9 +158,21 @@ class Settings(BaseSettings):
     arango_username: str = "root"
     arango_password: str | None = None
 
-    # Extraction (Pass 1) concurrency, bounded to the active tier's RPM limit.
-    extraction_rpm_limit: int = 20
+    # Extraction (Pass 1) concurrency — kept low enough to stay under a free tier's typical
+    # ~20 RPM ceiling given real-world call latency. (A separate `extraction_rpm_limit` field
+    # used to sit next to this one to document that reasoning, but nothing ever read it — a
+    # concurrency cap, not a request-rate cap, is what's actually enforced, by the Semaphore in
+    # extract/pipeline.py's run_extraction. Removed rather than left as a misleading no-op.)
     extraction_concurrency: int = 5
+
+    # How many dashboard pipeline jobs (api/jobs.py's scrape->clean->extract->merge-graph runs)
+    # may be actively running at once, across all companies. Each job does Playwright-rendered
+    # scraping (CPU/memory heavy) and drives the same LLM cascade every other job and company
+    # shares — with no cap, bulk-submitting several companies' jobs at once means all of them
+    # contend for both at full force simultaneously, with only reactive rate-limit retry as a
+    # backstop. A submitted job beyond this cap waits (status stays "pending") rather than
+    # running immediately; see api/jobs.py's `_JOB_SLOTS`.
+    max_concurrent_jobs: int = 3
 
     # Decoding controls for extraction calls. Free-tier models are the most prone to
     # repetition-loop collapse — a low temperature plus a frequency penalty discourages
@@ -194,6 +206,12 @@ class Settings(BaseSettings):
     # name is included; above it, only the names most similar to the unresolved entities, so
     # prompt size stays flat as a company's graph grows. None disables the cap.
     graph_candidate_names_limit: int | None = 40
+
+    # How many companies `merge-graph-pending` (cron/merge_pending.sh) processes at once. Each
+    # company's own merge is already safely serialized by cli.py's per-company _MERGE_LOCKS —
+    # running several *different* companies' merges concurrently doesn't touch that invariant,
+    # just the wall-clock time one cron tick takes as company count grows.
+    merge_pending_concurrency: int = 3
 
     # Fixed domain taxonomy, tagged on extracted entities/relationships — kept as a shared axis
     # for a future cross-company comparison feature, not used to classify/group anymore.

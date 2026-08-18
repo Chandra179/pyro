@@ -5,12 +5,17 @@ but never silently fuse two systems that merely look alike — a false merge is 
 than a missed one, and the LLM tier still catches misses.
 """
 
-from pyro.graph.resolve import candidate_names, resolve_known_names
+from pyro.graph.resolve import (
+    ResolvedName,
+    _is_generic,
+    candidate_names,
+    resolve_known_names,
+)
 
 
 def test_exact_match_resolves_without_the_llm():
     mapping, unresolved = resolve_known_names(["Kafka"], ["Kafka", "Cassandra"])
-    assert mapping == {"Kafka": "Kafka"}
+    assert mapping == {"Kafka": ResolvedName(canonical="Kafka", method="exact")}
     assert unresolved == []
 
 
@@ -18,13 +23,17 @@ def test_case_and_punctuation_drift_resolves_to_the_canonical_spelling():
     mapping, unresolved = resolve_known_names(
         ["kafka", "USER-SERVICE"], ["Kafka", "User Service"]
     )
-    assert mapping == {"kafka": "Kafka", "USER-SERVICE": "User Service"}
+    assert mapping == {
+        "kafka": ResolvedName(canonical="Kafka", method="exact"),
+        "USER-SERVICE": ResolvedName(canonical="User Service", method="exact"),
+    }
     assert unresolved == []
 
 
 def test_near_miss_resolves_by_fuzzy_match():
     mapping, unresolved = resolve_known_names(["Users Service"], ["User Service"])
-    assert mapping == {"Users Service": "User Service"}
+    assert mapping["Users Service"].canonical == "User Service"
+    assert mapping["Users Service"].method.startswith("fuzzy:")
     assert unresolved == []
 
 
@@ -53,6 +62,43 @@ def test_empty_graph_leaves_everything_unresolved():
     mapping, unresolved = resolve_known_names(["Kafka", "Titus"], [])
     assert mapping == {}
     assert unresolved == ["Kafka", "Titus"]
+
+
+def test_generic_name_skips_exact_match_and_goes_to_the_model():
+    """"new microservice" is a relative description, not a stable identifier — two unrelated
+    articles can independently produce the exact same phrase for unrelated systems, so an exact
+    string match here must not be trusted the way "Kafka" == "Kafka" is."""
+    mapping, unresolved = resolve_known_names(
+        ["new microservice"], ["new microservice", "Kafka"]
+    )
+    assert mapping == {}
+    assert unresolved == ["new microservice"]
+
+
+def test_generic_name_skips_fuzzy_match_too():
+    mapping, unresolved = resolve_known_names(
+        ["old API service"], ["old API services", "Kafka"]
+    )
+    assert mapping == {}
+    assert unresolved == ["old API service"]
+
+
+def test_real_proper_nouns_starting_with_a_qualifier_word_are_not_treated_as_generic():
+    """"New Relic" starts with "new" but is a specific product name, not a relative description —
+    the generic check requires a trailing generic noun (service/system/gateway/...) too, precisely
+    so this stays on the fast exact-match path."""
+    mapping, unresolved = resolve_known_names(["New Relic"], ["New Relic"])
+    assert mapping == {"New Relic": ResolvedName(canonical="New Relic", method="exact")}
+    assert unresolved == []
+
+
+def test_is_generic_examples():
+    assert _is_generic("new microservice")
+    assert _is_generic("the old service")
+    assert _is_generic("legacy Kafka cluster")
+    assert not _is_generic("New Relic")
+    assert not _is_generic("Cassandra")
+    assert not _is_generic("Open Connect")
 
 
 def test_candidate_names_returns_everything_below_the_cap():

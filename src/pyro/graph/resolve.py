@@ -18,15 +18,54 @@ from __future__ import annotations
 
 import logging
 import re
+from typing import NamedTuple
 
 from rapidfuzz import fuzz, process
 
 logger = logging.getLogger(__name__)
 
+
+class ResolvedName(NamedTuple):
+    """One article name's resolution, with *how* it was decided kept alongside the result.
+
+    `method` is one of "exact", "fuzzy:<score>" (from this module), or "llm" (from
+    graph/merge.py's model tier) — an audit trail for what would otherwise be an unrecoverable
+    decision the instant `canonical` is written to storage. See db/entities.py, where this is
+    persisted per-alias rather than discarded."""
+
+    canonical: str
+    method: str
+
 # Fuzzy matching is only trusted for names long enough for a high score to be meaningful. Short
 # names ("S3", "EC2", "ELB") differ by one or two characters between genuinely distinct systems,
 # so they must match exactly or go to the model.
 _MIN_FUZZY_LENGTH = 5
+
+# Relative/generic descriptions an article uses when it never gives a system a real name — "the
+# new microservice", "old API service". These are not stable identifiers: two unrelated articles
+# describing unrelated migrations can independently produce the exact same phrase. String-matching
+# them (exact or fuzzy) against the existing index would silently conflate unrelated systems, so
+# names matching this are always routed to the LLM tier regardless of match quality, where
+# kind/domain/description context can inform a real decision instead of a coincidence.
+#
+# Requires a qualifier ("new"/"old"/...) *and* a generic system noun somewhere after it — a
+# qualifier alone would misfire on real proper nouns that happen to start with one, like "New
+# Relic" or "New York" region names. Over-matching here just means an extra LLM call for a name
+# that turns out fine on its own; under-matching is the failure mode that actually corrupts the
+# graph, so the noun list is kept broad on purpose.
+_GENERIC_QUALIFIER = r"(new|old|legacy|current|existing|updated|original|previous)"
+_GENERIC_NOUN = (
+    r"(service|microservice|api|system|gateway|layer|app|application|component|"
+    r"database|db|pipeline|engine|cluster|worker|endpoint|module|tool)"
+)
+_GENERIC_NAME_RE = re.compile(
+    rf"^(the |a |an |this |that )?{_GENERIC_QUALIFIER}\b.*\b{_GENERIC_NOUN}\b",
+    re.IGNORECASE,
+)
+
+
+def _is_generic(name: str) -> bool:
+    return bool(_GENERIC_NAME_RE.match(name.strip()))
 
 # token_sort_ratio, not WRatio: WRatio folds in partial_ratio, which scores a substring match as
 # near-perfect and would happily collapse "Kafka" into "Kafka Connect" — two different systems.
@@ -68,22 +107,28 @@ class KnownNames:
 
     def resolve(
         self, article_names: list[str], threshold: int = 92
-    ) -> tuple[dict[str, str], list[str]]:
+    ) -> tuple[dict[str, ResolvedName], list[str]]:
         """Match `article_names` against the index without a model.
 
-        Returns `(mapping, unresolved)` where `mapping` sends an article's name to the canonical
-        existing name it matched, and `unresolved` lists the names that need the merge LLM.
+        Returns `(mapping, unresolved)` where `mapping` sends an article's name to a
+        `ResolvedName(canonical, method)` — `method` records *how* the match was decided
+        ("exact" or "fuzzy:<score>"), not just what it resolved to, so that decision is not lost
+        the instant it's made (see `ResolvedName`'s docstring). `unresolved` lists the names that
+        need the merge LLM.
 
         Matching runs in two tiers: exact on the normalized form, then fuzzy at or above
         `threshold` for names of at least _MIN_FUZZY_LENGTH characters. An article name that
         matches nothing is left unresolved rather than assumed new — deciding "this is a
-        genuinely new system" is exactly the judgement the model is for.
+        genuinely new system" is exactly the judgement the model is for. A generic/relative name
+        (`_is_generic`) always skips straight to unresolved even on a would-be exact or fuzzy
+        match — string equality between two generic phrases isn't evidence they're the same
+        system, so this always needs the model's judgement (see `_GENERIC_NAME_RE`'s comment).
         """
         # Fuzzy candidates are the normalized keys; mapping back through _by_normalized recovers
         # the canonical spelling to actually store.
         fuzzy_pool = list(self._by_normalized)
 
-        mapping: dict[str, str] = {}
+        mapping: dict[str, ResolvedName] = {}
         unresolved: list[str] = []
 
         for name in article_names:
@@ -91,9 +136,13 @@ class KnownNames:
             if not key:
                 continue
 
+            if _is_generic(name):
+                unresolved.append(name)
+                continue
+
             exact = self._by_normalized.get(key)
             if exact is not None:
-                mapping[name] = exact
+                mapping[name] = ResolvedName(canonical=exact, method="exact")
                 continue
 
             if len(key) >= _MIN_FUZZY_LENGTH and fuzzy_pool:
@@ -105,7 +154,9 @@ class KnownNames:
                     logger.debug(
                         "fuzzy-resolved %r -> %r (score %.1f)", name, canonical, match[1]
                     )
-                    mapping[name] = canonical
+                    mapping[name] = ResolvedName(
+                        canonical=canonical, method=f"fuzzy:{match[1]:.0f}"
+                    )
                     continue
 
             unresolved.append(name)
@@ -117,7 +168,7 @@ def resolve_known_names(
     article_names: list[str],
     existing_names: list[str],
     threshold: int = 92,
-) -> tuple[dict[str, str], list[str]]:
+) -> tuple[dict[str, ResolvedName], list[str]]:
     """One-off form of `KnownNames.resolve` for callers that don't need the index kept around
     across multiple calls (tests; anywhere resolving against a fixed, unchanging name list)."""
     return KnownNames(existing_names).resolve(article_names, threshold)

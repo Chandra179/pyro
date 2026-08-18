@@ -148,41 +148,51 @@ async def _resolve_urls(
         return [url], "article"
 
 
-def _run_job(job: Job) -> None:
-    settings = Settings(prompts=build_prompts_config(job.extraction_variant))
-    try:
-        job.status = "scraping"
-        urls, source_kind = asyncio.run(_resolve_urls(job.url, settings))
-        job.source_kind = source_kind
-        job.discovered_count = len(urls)
-        with open_db_from_settings(settings) as database:
-            job.scraped_count = asyncio.run(
-                scrape_urls(
-                    urls,
-                    database,
-                    job.company_name,
-                    limit=job.limit,
-                    config=settings.scrape,
-                )
-            )
+# Bounds how many jobs actively run at once, across every company — each does Playwright-rendered
+# scraping plus a full LLM cascade run, and nothing else in the pipeline throttles that (see
+# Settings.max_concurrent_jobs's docstring). Sized once at import time from the default Settings();
+# a job submitted beyond the cap blocks at the top of _run_job with its status still "pending"
+# (never flips to "scraping") until a slot frees up — an implicit queue the dashboard already
+# renders correctly, no new job state needed.
+_JOB_SLOTS = threading.Semaphore(Settings().max_concurrent_jobs)
 
-        # Scoped to this job's company: the clean/extract stages select work purely by which
-        # fields are still null, so two dashboard jobs running at once would otherwise process
-        # each other's articles and report each other's counts.
-        job.status = "cleaning"
-        _clean_impl(settings=settings, company_name=job.company_name)
-        job.status = "extracting"
-        _extract_impl(settings=settings, company_name=job.company_name)
-        job.status = "merging"
-        _merge_graph_impl(
-            job.company_name,
-            settings=settings,
-            reporter=JobGraphReporter(job),
-        )
-        job.status = "done"
-    except Exception as exc:
-        job.status = "error"
-        job.error = str(exc)
+
+def _run_job(job: Job) -> None:
+    with _JOB_SLOTS:
+        settings = Settings(prompts=build_prompts_config(job.extraction_variant))
+        try:
+            job.status = "scraping"
+            urls, source_kind = asyncio.run(_resolve_urls(job.url, settings))
+            job.source_kind = source_kind
+            job.discovered_count = len(urls)
+            with open_db_from_settings(settings) as database:
+                job.scraped_count = asyncio.run(
+                    scrape_urls(
+                        urls,
+                        database,
+                        job.company_name,
+                        limit=job.limit,
+                        config=settings.scrape,
+                    )
+                )
+
+            # Scoped to this job's company: the clean/extract stages select work purely by which
+            # fields are still null, so two dashboard jobs running at once would otherwise process
+            # each other's articles and report each other's counts.
+            job.status = "cleaning"
+            _clean_impl(settings=settings, company_name=job.company_name)
+            job.status = "extracting"
+            _extract_impl(settings=settings, company_name=job.company_name)
+            job.status = "merging"
+            _merge_graph_impl(
+                job.company_name,
+                settings=settings,
+                reporter=JobGraphReporter(job),
+            )
+            job.status = "done"
+        except Exception as exc:
+            job.status = "error"
+            job.error = str(exc)
 
 
 def submit_job(
@@ -200,6 +210,11 @@ def submit_job(
     )
     JOBS[job.id] = job
     _evict_old_jobs()
+    # Still an unconditional thread per job, deliberately: bounding *active* work (the semaphore
+    # inside _run_job) is what protects CPU/LLM capacity. A thread blocked waiting for a slot costs
+    # only a stack, and keeps shutdown behavior identical to before (daemon=True, no executor
+    # lifecycle to manage) — see Settings.max_concurrent_jobs's docstring for the actual risk this
+    # guards against.
     threading.Thread(target=_run_job, args=(job,), daemon=True).start()
     return job
 

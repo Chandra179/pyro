@@ -66,6 +66,9 @@ def canonicalize_relations(db: Database, company_name: str) -> dict[str, int]:
             # Don't overwrite a phrase that's already there with the same thing twice; otherwise
             # record what the edge used to say so the rewrite stays inspectable.
             relation_phrase=edge.get("relation_phrase") or old_relation,
+            # This edge is moving to a new key (its relation changed), so carry over every article
+            # that ever confirmed it under the old key instead of collapsing back down to one id.
+            extra_source_article_ids=edge.get("source_article_ids"),
         )
         written.add(new_key)
         if new_key != edge["_key"]:

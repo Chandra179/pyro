@@ -21,9 +21,20 @@ class _FakeDb:
         return list(self.edges.values())
 
     def upsert_relationship(
-        self, company_name, source, target, relation, as_of, source_article_id, relation_phrase=None
+        self,
+        company_name,
+        source,
+        target,
+        relation,
+        as_of,
+        source_article_id,
+        relation_phrase=None,
+        extra_source_article_ids=None,
     ):
         key = relationship_key(company_name, source, relation, target)
+        ids = list(dict.fromkeys(extra_source_article_ids or []))
+        if source_article_id and source_article_id not in ids:
+            ids.append(source_article_id)
         self.edges[key] = {
             "_key": key,
             "source": source,
@@ -32,6 +43,7 @@ class _FakeDb:
             "relation_phrase": relation_phrase,
             "as_of": as_of,
             "source_article_id": source_article_id,
+            "source_article_ids": ids,
         }
 
     def delete_key(self, key):

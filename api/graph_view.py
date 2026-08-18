@@ -2,11 +2,18 @@
 Graph view (api/main.py, dashboard/templates/partials/_panel_graph.html).
 
 v1 is one static whole-company diagram, not an interactive graph UI — filtering/zoom is a later
-iteration. The one filter applied here (dropping "team" entities) is a rendering-only choice:
-teams are almost always one-off per-article author credits that don't recur across a company's
-blog history, so they add clutter to a systems diagram without carrying diagram-relevant
-information. They're still stored and returned by list_entities for any future use — this only
-affects what gets drawn.
+iteration. The filters applied here are rendering-only choices, same idea in both cases: the data
+stays in ArangoDB (list_entities/list_relationships return everything) for any future use, this
+just controls what gets drawn.
+
+- Dropping "team" entities: teams are almost always one-off per-article author credits that don't
+  recur across a company's blog history, so they add clutter without carrying diagram-relevant
+  information.
+- Dropping edges with `invalid_at` set: those describe behavior of a system after a later article
+  says it was replaced (see graph/merge.py's `replaced_by` handling / db/relationships.py's
+  `invalidate_outgoing`) — still true historically, but not part of the *current* system map this
+  diagram is meant to show. A future "show historical" toggle can surface them; the default view
+  shouldn't draw decommissioned behavior as if it's live.
 """
 
 from __future__ import annotations
@@ -54,6 +61,8 @@ def build_graph_mermaid(entities: list[dict], relationships: list[dict]) -> str:
         lines.append(f'  {slug(entity["name"])}{open_}"{_label(entity["name"])}"{close}')
 
     for rel in relationships:
+        if rel.get("invalid_at"):
+            continue
         if rel["source"] not in visible or rel["target"] not in visible:
             continue
         label = _label(_humanize(rel["relation"]))

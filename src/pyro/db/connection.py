@@ -71,6 +71,13 @@ _RELATIONSHIP_INDEXES = [
         "fields": ["company_name"],
         "name": "idx_relationships_company_name",
     },
+    # Backs invalidate_outgoing (graph/merge.py, on a `replaced_by` edge): closing the validity
+    # window on every edge sourced from a decommissioned entity, without a full company-wide scan.
+    {
+        "type": "persistent",
+        "fields": ["company_name", "source_key"],
+        "name": "idx_relationships_company_name_source_key",
+    },
 ]
 
 _MIGRATION_HINT = (

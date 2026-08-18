@@ -4,6 +4,7 @@ import asyncio
 import logging
 import threading
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 
 import typer
 from dotenv import load_dotenv
@@ -177,20 +178,31 @@ def _merge_graph_pending_impl(settings: Settings | None = None) -> None:
     merge" button — safe to call repeatedly since run_graph_merge is incremental/idempotent (a
     company with nothing new to merge is a fast no-op, not a full rebuild). Skips a company
     outright if GraphMergeInProgress (e.g. a pipeline job already running for it) rather than
-    failing the whole batch."""
+    failing the whole batch.
+
+    Companies run up to `settings.merge_pending_concurrency` at a time, not one after another —
+    each company's own merge is already serialized correctly by `_MERGE_LOCKS`, so concurrent
+    *different* companies never touches that invariant. Sequential-only becomes a real problem as
+    company count grows: one cron tick's wall-clock time would otherwise scale linearly with how
+    many companies exist, and can eventually exceed the schedule interval (see cron/README.md)."""
     settings = settings or Settings()
     with open_db_from_settings(settings) as database:
         companies = database.list_companies_with_pending_merge()
     if not companies:
         typer.echo("no companies with pending graph merge")
         return
-    for company_name in companies:
+
+    def _merge_one(company_name: str) -> None:
         try:
             _merge_graph_impl(company_name, settings=settings)
         except GraphMergeInProgress:
             typer.echo(f"{company_name}: merge already in progress, skipping")
         except Exception as exc:
             typer.echo(f"{company_name}: merge failed: {exc}")
+
+    workers = min(settings.merge_pending_concurrency, len(companies))
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        list(pool.map(_merge_one, companies))
 
 
 @app.command(name="merge-graph-pending")

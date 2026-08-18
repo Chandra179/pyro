@@ -10,6 +10,7 @@ import pytest
 from pyro.db.keys import relationship_key
 from pyro.extract.schema import (
     RELATION_KINDS,
+    ExtractedEntity,
     ExtractedGraph,
     ExtractedRelationship,
     merge_graph_chunks,
@@ -88,6 +89,21 @@ def test_unknown_predicate_falls_back_instead_of_failing_validation():
     assert rel.relation_phrase == "frobnicates via"
 
 
+def test_unrecognized_predicate_logs_a_warning(caplog):
+    """The fallback must not be silent — otherwise vocabulary drift (the synonym table missing a
+    real phrasing) is only ever noticed by someone manually spotting a bad diagram, which is how
+    the synonym table came to exist the first time."""
+    with caplog.at_level("WARNING", logger="pyro.extract.schema"):
+        ExtractedRelationship(source="A", target="B", relation="frobnicates via")
+    assert any("frobnicates via" in record.message for record in caplog.records)
+
+
+def test_recognized_synonym_does_not_log_a_warning(caplog):
+    with caplog.at_level("WARNING", logger="pyro.extract.schema"):
+        ExtractedRelationship(source="A", target="B", relation="persists to")
+    assert caplog.records == []
+
+
 def test_every_vocabulary_value_validates():
     for kind in RELATION_KINDS:
         assert ExtractedRelationship(source="A", target="B", relation=kind).relation == kind
@@ -108,6 +124,21 @@ def test_synonym_edges_collapse_into_one_when_merging_chunks():
     merged = merge_graph_chunks(chunks)
     assert len(merged.relationships) == 1
     assert merged.relationships[0].relation == "writes_to"
+
+
+def test_entity_description_is_optional_and_defaults_to_none():
+    entity = ExtractedEntity(name="new microservice", kind="service", domain="Other")
+    assert entity.description is None
+
+
+def test_entity_description_round_trips():
+    entity = ExtractedEntity(
+        name="new microservice",
+        kind="service",
+        domain="Other",
+        description="Replaces the old API service's artwork/video-metadata calls.",
+    )
+    assert entity.description == "Replaces the old API service's artwork/video-metadata calls."
 
 
 def test_synonyms_produce_the_same_storage_key():

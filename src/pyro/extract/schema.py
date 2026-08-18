@@ -4,12 +4,15 @@ resolves across articles into one company-wide diagram."""
 
 from __future__ import annotations
 
+import logging
 import re
 from typing import Any, Literal
 
 from pydantic import BaseModel, model_validator
 
 from pyro.config import Settings
+
+logger = logging.getLogger(__name__)
 
 # Reused as a tag on entities/relationships, not a classifier anymore — kept specifically so a
 # later cross-company comparison feature has a shared axis to align topics on across companies.
@@ -198,6 +201,11 @@ def normalize_relation(raw: str) -> str:
         ):
             return canonical
 
+    # No entry in the vocabulary or synonym table recognized this phrasing — falling back is
+    # silent to callers by design (extraction must not fail on it), but that also means vocabulary
+    # drift is invisible unless it's logged here. Grep this warning to see what the synonym table
+    # is missing before it accumulates into a diagram full of misleadingly generic edges.
+    logger.warning("relation %r matched no vocabulary/synonym entry; falling back to %r", raw, _FALLBACK_RELATION)
     return _FALLBACK_RELATION
 
 
@@ -205,6 +213,10 @@ class ExtractedEntity(BaseModel):
     name: str
     kind: EntityKind = "service"
     domain: str = "Other"
+    # One-sentence disambiguator from the article, most useful when `name` couldn't be a real
+    # proper noun (e.g. the article never names "the new microservice") — see graph/resolve.py's
+    # generic-name handling, which is what actually consumes this at merge time.
+    description: str | None = None
 
 
 class ExtractedRelationship(BaseModel):

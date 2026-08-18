@@ -120,9 +120,18 @@ class Database:
         domain: str,
         alias: str | None = None,
         first_seen_article_id: str | None = None,
+        description: str | None = None,
+        alias_method: str | None = None,
     ) -> str:
         return self.entities.upsert(
-            company_name, name, kind, domain, alias, first_seen_article_id
+            company_name,
+            name,
+            kind,
+            domain,
+            alias,
+            first_seen_article_id,
+            description=description,
+            alias_method=alias_method,
         )
 
     def upsert_relationship(
@@ -134,6 +143,7 @@ class Database:
         as_of: str | None,
         source_article_id: str | None,
         relation_phrase: str | None = None,
+        extra_source_article_ids: list[str] | None = None,
     ) -> None:
         self.relationships.upsert(
             company_name,
@@ -143,6 +153,18 @@ class Database:
             as_of,
             source_article_id,
             relation_phrase=relation_phrase,
+            extra_source_article_ids=extra_source_article_ids,
+        )
+
+    def invalidate_outgoing_relationships(
+        self,
+        company_name: str,
+        source: str,
+        at: str,
+        exclude_relation: str | None = None,
+    ) -> int:
+        return self.relationships.invalidate_outgoing(
+            company_name, source, at, exclude_relation=exclude_relation
         )
 
     def list_entity_names(self, company_name: str) -> list[str]:

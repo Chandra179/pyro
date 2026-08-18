@@ -25,14 +25,18 @@ from pydantic import BaseModel, ValidationError
 
 from pyro.config import Settings
 from pyro.db import Article, Database
+from pyro.db.keys import now_iso
 from pyro.graph.prompts import merge_system_prompt, merge_user_prompt
-from pyro.graph.resolve import KnownNames, candidate_names
+from pyro.graph.resolve import KnownNames, ResolvedName, candidate_names
 from pyro.router import graph_model_params, stream_with_rate_limit_retry
 
 logger = logging.getLogger(__name__)
 
 
-class ResolvedName(BaseModel):
+class ResolvedNameItem(BaseModel):
+    """One entry of the merge call's raw JSON response — distinct from graph.resolve.ResolvedName
+    (the canonical/method pair the rest of this module works with) to avoid the two colliding."""
+
     article_name: str
     canonical_name: str
 
@@ -42,7 +46,7 @@ class ResolutionResponse(BaseModel):
     response fails in one place with a useful error, matching how extract/schema.py already
     validates the extraction call's output."""
 
-    resolved: list[ResolvedName] = []
+    resolved: list[ResolvedNameItem] = []
 
 
 class GraphReporter:
@@ -77,9 +81,12 @@ async def _resolve_names(
     existing_names: list[str],
     article_title: str,
     ctx: GraphMergeContext,
-) -> dict[str, str]:
+) -> dict[str, ResolvedName]:
     """One LLM call for the entities the deterministic pass couldn't settle: returns
-    {article_entity_name: canonical_name} for each."""
+    {article_entity_name: ResolvedName(canonical_name, method="llm")} for each. `method` is
+    always "llm" here even when the model decides an entity is new (canonical == article's own
+    name) — it's still a model judgment call, worth distinguishing later from a match nobody ever
+    had to reason about (see ResolvedName's docstring)."""
     model_params = {**ctx.model_params, "max_tokens": ctx.settings.graph_max_tokens}
     ctx.reporter.start_call(label=article_title, model=model_params["model"])
     kinds = {e["name"]: e for e in article_entities}
@@ -89,6 +96,9 @@ async def _resolve_names(
                 "name": name,
                 "kind": kinds.get(name, {}).get("kind"),
                 "domain": kinds.get(name, {}).get("domain"),
+                # Most load-bearing for a generic name like "new microservice" — kind/domain alone
+                # rarely distinguish it from an unrelated system with the same generic phrasing.
+                "description": kinds.get(name, {}).get("description"),
             }
             for name in unresolved
         ],
@@ -134,7 +144,9 @@ async def _resolve_names(
         return {}
 
     return {
-        item.article_name.strip(): item.canonical_name.strip()
+        item.article_name.strip(): ResolvedName(
+            canonical=item.canonical_name.strip(), method="llm"
+        )
         for item in parsed.resolved
         if item.article_name.strip() and item.canonical_name.strip()
     }
@@ -176,28 +188,52 @@ async def _merge_article(
 
     for entity in entities:
         name = entity["name"]
-        canonical_name = mapping.get(name, name)
+        resolved = mapping.get(name)
+        canonical_name = resolved.canonical if resolved else name
         db.upsert_entity(
             ctx.company_name,
             canonical_name,
             entity.get("kind", "service"),
             entity.get("domain", "Other"),
             alias=name if canonical_name != name else None,
+            # Only meaningful alongside a real alias: a resolved-but-unchanged name (LLM said
+            # "new") or a missing mapping (malformed merge response) both leave canonical == name,
+            # so alias is already None above and there is no decision to record.
+            alias_method=resolved.method if resolved and canonical_name != name else None,
             first_seen_article_id=article.id,
+            description=entity.get("description"),
         )
         # So the next article in this run sees it too, without a re-fetch from the DB.
         known.add(canonical_name)
 
+    def _canonical(name: str) -> str:
+        resolved = mapping.get(name)
+        return resolved.canonical if resolved else name
+
     for rel in relationships:
+        source_name = _canonical(rel["source"])
+        target_name = _canonical(rel["target"])
         db.upsert_relationship(
             ctx.company_name,
-            mapping.get(rel["source"], rel["source"]),
-            mapping.get(rel["target"], rel["target"]),
+            source_name,
+            target_name,
             rel["relation"],
             rel.get("as_of"),
             source_article_id=article.id,
             relation_phrase=rel.get("relation_phrase"),
         )
+        if rel["relation"] == "replaced_by":
+            # source_name is the system this article says was replaced by target_name — its own
+            # outgoing edges (calls/writes_to/...) describe behavior that stopped once it was
+            # decommissioned, so close their validity window (see db/relationships.py's
+            # invalidate_outgoing). The replaced_by fact itself, and anything pointing *at*
+            # source_name, stays valid — those remain historically true regardless.
+            db.invalidate_outgoing_relationships(
+                ctx.company_name,
+                source_name,
+                at=rel.get("as_of") or now_iso(),
+                exclude_relation="replaced_by",
+            )
 
     db.mark_graph_merged(article.id)
 

@@ -46,14 +46,54 @@ class _FakeDb:
     def list_entity_names(self, company_name):
         return sorted(e["name"] for e in self.entities.values())
 
-    def upsert_entity(self, company_name, name, kind, domain, alias=None, first_seen_article_id=None):
-        self.entities[name] = {"name": name, "kind": kind, "domain": domain}
+    def upsert_entity(
+        self,
+        company_name,
+        name,
+        kind,
+        domain,
+        alias=None,
+        first_seen_article_id=None,
+        description=None,
+        alias_method=None,
+    ):
+        aliases = self.entities.get(name, {}).get("aliases", {})
+        if alias:
+            aliases = {**aliases, alias: alias_method}
+        self.entities[name] = {
+            "name": name,
+            "kind": kind,
+            "domain": domain,
+            "description": description,
+            "aliases": aliases,
+        }
         return name
 
     def upsert_relationship(
-        self, company_name, source, target, relation, as_of, source_article_id, relation_phrase=None
+        self,
+        company_name,
+        source,
+        target,
+        relation,
+        as_of,
+        source_article_id,
+        relation_phrase=None,
+        extra_source_article_ids=None,
     ):
-        self.relationships.append({"source": source, "target": target, "relation": relation})
+        self.relationships.append(
+            {"source": source, "target": target, "relation": relation, "invalid_at": None}
+        )
+
+    def invalidate_outgoing_relationships(self, company_name, source, at, exclude_relation=None):
+        closed = 0
+        for rel in self.relationships:
+            if rel["source"] != source or rel["invalid_at"] is not None:
+                continue
+            if exclude_relation is not None and rel["relation"] == exclude_relation:
+                continue
+            rel["invalid_at"] = at
+            closed += 1
+        return closed
 
     def list_entities(self, company_name):
         return list(self.entities.values())
@@ -102,6 +142,9 @@ async def test_run_graph_merge_resolves_reused_name_via_llm():
     assert result["articles_merged"] == 2
     assert list(db.entities.keys()) == ["vLLM"]
     assert db.merged_ids == ["a1", "a2"]
+    # The LLM decided "serving system" == "vLLM" — that decision is worth keeping, not just the
+    # end result (see graph/resolve.py's ResolvedName / db/entities.py's alias_method).
+    assert db.entities["vLLM"]["aliases"]["serving system"] == "llm"
 
 
 @pytest.mark.asyncio
@@ -130,6 +173,8 @@ async def test_second_article_reusing_known_names_costs_no_llm_call():
     assert mock_call.await_count == 1
     # Case drift resolved to the stored spelling, so no duplicate entity was created.
     assert list(db.entities.keys()) == ["Cassandra"]
+    # Resolved without a model call, so the audit trail should say so, not "llm".
+    assert db.entities["Cassandra"]["aliases"]["cassandra"] == "exact"
 
 
 @pytest.mark.asyncio
@@ -171,3 +216,45 @@ async def test_run_graph_merge_raises_when_company_has_no_extracted_articles():
 
     with pytest.raises(RuntimeError, match="no extracted articles"):
         await run_graph_merge(db, settings, "acme")
+
+
+@pytest.mark.asyncio
+async def test_replaced_by_invalidates_the_replaced_entitys_outgoing_edges():
+    """"Zuul" is decommissioned in favor of "Titus Gateway". Zuul's own outgoing edge (it calling
+    Downstream) describes behavior that stopped being true, so it should come out closed
+    (invalid_at set) — but the replaced_by fact itself, and anything pointing *at* Zuul, must stay
+    open."""
+    a1 = _article(
+        "a1",
+        entities=[
+            {"name": "Zuul", "kind": "service", "domain": "Other"},
+            {"name": "Titus Gateway", "kind": "service", "domain": "Other"},
+            {"name": "Downstream", "kind": "service", "domain": "Other"},
+        ],
+        relationships=[
+            {"source": "Zuul", "target": "Downstream", "relation": "calls"},
+            {"source": "Zuul", "target": "Titus Gateway", "relation": "replaced_by"},
+        ],
+    )
+    db = _FakeDb(extracted_articles=[a1], pending_articles=[a1])
+
+    resolved_response = json.dumps(
+        {
+            "resolved": [
+                {"article_name": "Zuul", "canonical_name": "Zuul"},
+                {"article_name": "Titus Gateway", "canonical_name": "Titus Gateway"},
+                {"article_name": "Downstream", "canonical_name": "Downstream"},
+            ]
+        }
+    )
+
+    async def fake_acompletion(**kwargs):
+        return _fake_stream_response(resolved_response)
+
+    settings = Settings(_env_file=None, openrouter_api_key="or-key")
+    with patch("pyro.graph.merge.acompletion", new=AsyncMock(side_effect=fake_acompletion)):
+        await run_graph_merge(db, settings, "acme")
+
+    by_relation = {rel["relation"]: rel for rel in db.relationships}
+    assert by_relation["calls"]["invalid_at"] is not None
+    assert by_relation["replaced_by"]["invalid_at"] is None
