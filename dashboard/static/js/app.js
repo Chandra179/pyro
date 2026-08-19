@@ -128,6 +128,18 @@ document.addEventListener("click", function (evt) {
   if (dialog && evt.target === dialog) dialog.close();
 });
 
+// --- merge history collapse ------------------------------------------------------------------
+// Purely visual: toggles the `hidden` class on the sibling .graph-history-list and flips
+// aria-expanded (which static/src/input.css uses to rotate the chevron). Never touches the SSE
+// swap target itself, so it's safe to collapse a still-streaming run's history mid-stream — the
+// list keeps receiving call-open/-delta frames underneath, just not visibly.
+function toggleMergeHistory(button) {
+  var expanded = button.getAttribute("aria-expanded") === "true";
+  button.setAttribute("aria-expanded", String(!expanded));
+  var list = button.nextElementSibling;
+  list.classList.toggle("hidden", expanded);
+}
+
 // --- merge-run streaming --------------------------------------------------------------------
 // Live merge output arrives as server-sent events (api/sse.py) appended into per-call <pre>
 // elements. Keep each one pinned to the bottom as it grows, unless the reader has scrolled up to

@@ -6,6 +6,16 @@
    inline theme script in base.html (not by prefers-color-scheme alone). */
 @custom-variant dark (&:where(.dark, .dark *));
 
+/* Loaded via the Google Fonts <link> in base.html's <head>. Overriding these tokens changes
+   Tailwind's own default stacks (`font-sans` is what preflight puts on <html>, `font-mono` is
+   what it puts on <pre>/<code>), so the whole dashboard picks them up without any per-element
+   class — only headings opt into `font-display` explicitly (see base.html, index.html). */
+@theme {
+  --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Hanken Grotesk", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+}
+
 /* Shared form-control primitives — every text input/select/textarea in the
    dashboard (run form, data company picker, ...) used to repeat this same
    utility string verbatim. Defined once here so restyling a control restyles
@@ -35,6 +45,24 @@
    until it actually has a card in it. */
 .graph-history:has(> .graph-history-list:empty) {
   display: none;
+}
+
+/* The merge-history toggle's chevron (partials/graph_history.html) — collapsed state rotates it
+   flat rather than swapping icons, driven by the button's own aria-expanded so no JS is needed
+   beyond the class flip in static/js/app.js. */
+.chevron {
+  transition: transform 0.15s ease;
+}
+.history-toggle[aria-expanded="false"] .chevron {
+  transform: rotate(-90deg);
+}
+
+/* A merge call's left border only turns rose once its error slot has content — driven by :has()
+   rather than a server-computed class, because a streaming call doesn't know it failed until its
+   call-error-{i} frame lands well after the card was first painted, and the card's outer element
+   is never re-swapped to pick up a class change (see partials/graph_call.html). */
+.call:has(.call-error:not(:empty)) {
+  border-left-color: var(--color-rose-400);
 }
 
 /* A streaming call's error slot exists before there is an error to put in it (see

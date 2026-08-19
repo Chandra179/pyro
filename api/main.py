@@ -6,6 +6,7 @@ Run with `make dashboard` or `uv run uvicorn api.main:app --reload`.
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -34,6 +35,30 @@ app.mount(
     "/static", StaticFiles(directory=str(_DASHBOARD_DIR / "static")), name="static"
 )
 templates = Jinja2Templates(directory=str(_DASHBOARD_DIR / "templates"))
+
+
+def _timeago(value: str) -> str:
+    """Coarse relative time for a job's `created_at` (see api/jobs.py) — "4m ago" rather than a
+    raw ISO timestamp. A running job's card polls its summary every 2s (job_status.html), so this
+    stays current for the case that matters; a finished job's card renders once and doesn't need
+    to tick live."""
+    try:
+        then = datetime.fromisoformat(value)
+    except (TypeError, ValueError):
+        return ""
+    seconds = int((datetime.now(UTC) - then).total_seconds())
+    if seconds < 60:
+        return "just now"
+    minutes = seconds // 60
+    if minutes < 60:
+        return f"{minutes}m ago"
+    hours = minutes // 60
+    if hours < 24:
+        return f"{hours}h ago"
+    return f"{hours // 24}d ago"
+
+
+templates.env.filters["timeago"] = _timeago
 
 
 def _template_choices() -> list[dict]:

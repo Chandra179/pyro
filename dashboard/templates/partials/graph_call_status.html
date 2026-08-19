@@ -1,13 +1,18 @@
 {#
-  One merge call's status badge. Its own file because the SSE stream sends it twice: once inside
-  the call card when the call opens (streaming), and once on its own as the `call-close-{i}` frame
+  One merge call's status. Its own file because the SSE stream sends it twice: once inside the
+  call card when the call opens (streaming), and once on its own as the `call-close-{i}` frame
   that replaces it when the call finishes.
+
+  Plain text rather than a colored pill — a merge run can produce dozens of these, and the one
+  that actually needs to stand out is "failed"; "done" carrying its own color competed with that.
 #}
-{% from "partials/_macros.html" import badge %}
 {% if call.error %}
-  {{ badge("failed", "rose") }}
+  <span class="text-xs font-semibold text-rose-600 dark:text-rose-400">failed</span>
 {% elif call.done %}
-  {{ badge("done", "emerald") }}
+  <span class="text-xs text-slate-400 dark:text-slate-600">done</span>
 {% else %}
-  {{ badge("streaming", "amber", pulse=true) }}
+  <span class="inline-flex items-center gap-1.5 text-xs font-medium text-indigo-600 dark:text-indigo-300">
+    <span class="h-1.5 w-1.5 animate-pulse rounded-full bg-current"></span>
+    streaming
+  </span>
 {% endif %}
