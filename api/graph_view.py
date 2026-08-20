@@ -1,10 +1,12 @@
-"""Builds Mermaid flowchart source from a company's stored entity graph, for the dashboard's
+"""Builds React Flow graph elements from a company's stored entity graph, for the dashboard's
 Graph view (api/main.py, dashboard/templates/partials/_panel_graph.html).
 
-v1 is one static whole-company diagram, not an interactive graph UI — filtering/zoom is a later
-iteration. The filters applied here are rendering-only choices, same idea in both cases: the data
-stays in ArangoDB (list_entities/list_relationships return everything) for any future use, this
-just controls what gets drawn.
+Rendered client-side as an interactive React Flow graph (see
+dashboard/static/src/graph/GraphIsland.jsx) — pan, zoom, node dragging, and per-domain
+expand/collapse are handled there; this module's only job is shaping stored
+entities/relationships into a flat `{"nodes": [...], "edges": [...]}` dict. The data stays in
+ArangoDB (list_entities/list_relationships return everything) for any future use; the filters
+below are rendering-only choices:
 
 - Dropping "team" entities: teams are almost always one-off per-article author credits that don't
   recur across a company's blog history, so they add clutter without carrying diagram-relevant
@@ -14,30 +16,22 @@ just controls what gets drawn.
   `invalidate_outgoing`) — still true historically, but not part of the *current* system map this
   diagram is meant to show. A future "show historical" toggle can surface them; the default view
   shouldn't draw decommissioned behavior as if it's live.
+
+`domain` rides along on every node because it's the grouping key GraphIsland's expand/collapse
+feature clusters on (config/config.yaml's fixed domain taxonomy, stamped on every entity at
+extraction time) — falls back to "Other" for anything untagged, matching the taxonomy's own
+required fallback value.
 """
 
 from __future__ import annotations
 
-import re
-
 from pyro.db import slug
 
-_SHAPE_BY_KIND = {
-    "datastore": ("[(", ")]"),
-    "queue": ("{{", "}}"),
-    "external_system": ("([", "])"),
-}
-_DEFAULT_SHAPE = ("[", "]")
 
-# Characters that terminate or reshape a Mermaid node/edge label even inside quotes. Entity names
-# come from an LLM reading arbitrary blog prose, so names like `Search [v2]` and `Feed #3` do turn
-# up; left alone they produce a diagram that fails to parse and renders as nothing at all.
-_LABEL_UNSAFE = re.compile(r'["\[\]{}()<>|#;]')
-
-
-def _label(text: str) -> str:
-    """Make an arbitrary entity name safe to sit inside a quoted Mermaid label."""
-    return _LABEL_UNSAFE.sub(" ", text).replace("\n", " ").strip() or "?"
+def _clean_label(text: str) -> str:
+    """Entity/relation names come from an LLM reading arbitrary blog prose — collapse embedded
+    newlines so a label never breaks a single-line node/edge text layout."""
+    return " ".join(text.split()) or "?"
 
 
 def _humanize(relation: str) -> str:
@@ -46,28 +40,43 @@ def _humanize(relation: str) -> str:
     return relation.replace("_", " ")
 
 
-def build_graph_mermaid(entities: list[dict], relationships: list[dict]) -> str:
-    """Returns Mermaid `flowchart` source, or "" if there's nothing renderable (no non-team
-    entities) — callers should treat that as "no diagram yet", same as an empty entity list."""
+def build_graph_elements(entities: list[dict], relationships: list[dict]) -> dict:
+    """Returns {"nodes": [...], "edges": [...]}, or {"nodes": [], "edges": []} if there's nothing
+    renderable (no non-team entities) — callers should treat that as "no diagram yet", same as an
+    empty entity list."""
     visible = {e["name"] for e in entities if e.get("kind") != "team"}
     if not visible:
-        return ""
+        return {"nodes": [], "edges": []}
 
-    lines = ["flowchart LR"]
+    nodes: list[dict] = []
     for entity in entities:
         if entity["name"] not in visible:
             continue
-        open_, close = _SHAPE_BY_KIND.get(entity.get("kind", "service"), _DEFAULT_SHAPE)
-        lines.append(f'  {slug(entity["name"])}{open_}"{_label(entity["name"])}"{close}')
+        nodes.append(
+            {
+                "id": slug(entity["name"]),
+                "label": _clean_label(entity["name"]),
+                "kind": entity.get("kind", "service"),
+                "domain": entity.get("domain") or "Other",
+            }
+        )
 
-    for rel in relationships:
+    edges: list[dict] = []
+    for i, rel in enumerate(relationships):
         if rel.get("invalid_at"):
             continue
         if rel["source"] not in visible or rel["target"] not in visible:
             continue
-        label = _label(_humanize(rel["relation"]))
+        label = _clean_label(_humanize(rel["relation"]))
         if rel.get("as_of"):
-            label += f" ({_label(str(rel['as_of']))})"
-        lines.append(f'  {slug(rel["source"])} -->|"{label}"| {slug(rel["target"])}')
+            label += f" ({_clean_label(str(rel['as_of']))})"
+        edges.append(
+            {
+                "id": f"__edge_{i}",
+                "source": slug(rel["source"]),
+                "target": slug(rel["target"]),
+                "label": label,
+            }
+        )
 
-    return "\n".join(lines)
+    return {"nodes": nodes, "edges": edges}

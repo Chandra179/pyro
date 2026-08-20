@@ -130,6 +130,51 @@ class ArticleRepository:
             Article.from_doc(d) for d in self._query(query, company_name=company_name)
         ]
 
+    def list_summaries(
+        self, company_name: str, limit: int, offset: int
+    ) -> tuple[list[dict], int]:
+        """One page of lightweight article rows for the dashboard's extraction table
+        (dashboard/templates/partials/_panel_extraction.html), plus the total matching count for
+        pagination controls.
+
+        Projects down to just what that table renders — title/url/stage/entity-count/timestamp —
+        rather than returning full Article documents. That panel polls this every 4 seconds; a
+        full Article carries `cleaned_text` (often the entire post body) and the whole
+        `extracted_graph` JSON blob, neither of which the table displays. `list_articles` below is
+        still used where a caller actually needs the full document (e.g. the article preview
+        modal, via get_for_company)."""
+        query = """
+        FOR doc IN @@col
+          FILTER doc.company_name == @company_name
+          SORT doc.scraped_at DESC
+          LIMIT @offset, @limit
+          RETURN {
+            id: doc._key,
+            title: doc.title,
+            source_url: doc.source_url,
+            scraped_at: doc.scraped_at,
+            stage: doc.graph_merged_at != null
+              ? "merged"
+              : (doc.extracted_at != null
+                ? "extracted"
+                : (doc.cleaned_text != null ? "cleaned" : "scraped")),
+            entity_count: doc.extracted_graph != null
+              ? LENGTH(doc.extracted_graph.entities)
+              : null,
+          }
+        """
+        rows = self._query(
+            query, company_name=company_name, limit=limit, offset=offset
+        )
+        count_query = """
+        FOR doc IN @@col
+          FILTER doc.company_name == @company_name
+          COLLECT WITH COUNT INTO total
+          RETURN total
+        """
+        total = self._query(count_query, company_name=company_name)
+        return rows, (total[0] if total else 0)
+
     def list_articles(self, company_name: str) -> list[Article]:
         """All articles for a company regardless of pipeline stage, newest scrape first.
         Used by the dashboard's live extraction view, which polls this every 4s — `raw_html` is

@@ -25,6 +25,10 @@ class _StubDb:
     def list_articles(self, company_name):
         return self._articles
 
+    def list_article_summaries(self, company_name, limit, offset):
+        page = self._articles[offset : offset + limit]
+        return list(page), len(self._articles)
+
     def list_entities(self, company_name):
         return self._entities
 
@@ -78,7 +82,7 @@ def test_data_panel_respects_selected_company_and_view():
     assert "Entity graph · Stripe" in resp.text
 
 
-def test_data_panel_renders_mermaid_diagram_when_graph_has_entities():
+def test_data_panel_renders_react_flow_graph_when_graph_has_entities():
     client = _client(
         _StubDb(
             companies=["Netflix"],
@@ -89,7 +93,7 @@ def test_data_panel_renders_mermaid_diagram_when_graph_has_entities():
     )
     resp = client.get("/data/panel", params={"company": "Netflix", "view": "graph"})
     assert resp.status_code == 200
-    assert 'class="not-prose mermaid"' in resp.text
+    assert 'class="react-flow-graph not-prose"' in resp.text
     assert "Cassandra" in resp.text
 
 
@@ -108,13 +112,14 @@ def test_graph_view_labels_use_humanized_relation():
     )
     resp = client.get("/data/panel", params={"company": "Netflix", "view": "graph"})
     assert resp.status_code == 200
-    # Rendered inside an escaped <pre>, so the arrow syntax is HTML-escaped in the response.
+    # Rendered inside an HTML-escaped data-elements JSON attribute, so the space is the literal
+    # humanized text (no HTML entity involved, unlike the old Mermaid arrow syntax).
     assert "writes to" in resp.text
 
 
 def test_extraction_panel_polls_but_graph_panel_does_not():
-    """Only the extraction view self-refreshes — re-swapping a rendered mermaid diagram on a timer
-    hangs mermaid.render(), so the graph view offers an explicit Refresh link instead."""
+    """Only the extraction view self-refreshes — the graph view is an interactive React Flow
+    graph the viewer may be mid-pan/zoom/drag on, so it offers an explicit Refresh link instead."""
     client = _client(_StubDb(companies=["Netflix"]))
     extraction = client.get("/data/panel", params={"company": "Netflix"})
     graph = client.get("/data/panel", params={"company": "Netflix", "view": "graph"})
@@ -183,6 +188,8 @@ def test_static_assets_served():
         "/static/css/app.css",
         "/static/js/htmx.min.js",
         "/static/js/htmx-ext-sse.min.js",
+        "/static/js/graph-island.bundle.js",
+        "/static/css/react-flow.css",
         "/static/js/app.js",
     ):
         assert client.get(path).status_code == 200, path

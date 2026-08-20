@@ -1,18 +1,22 @@
-"""Wraps Mermaid diagram source in the markup mermaid.js looks for client-side.
+"""Wraps React Flow graph elements in the markup app.js scans for client-side.
 
 This used to also host a full markdown -> HTML renderer (`render_markdown`, with a
 pymdownx.superfences custom fence) for the prose synthesis stage. That stage was replaced by the
 graph merge, and nothing has called it since — it and its `markdown`/`pymdown-extensions`
-dependencies are gone. What remains is the one line the graph view actually needs.
+dependencies are gone. What remains is the one function the graph view actually needs.
 """
 
 from __future__ import annotations
 
 import html
+import json
 
 
-def render_mermaid(source: str) -> str:
-    """Wrap raw Mermaid source in the `<pre class="mermaid">` block that mermaid.min.js scans for
-    and replaces with an inline SVG (see dashboard/static/js/app.js). `not-prose` opts the block
-    out of Tailwind Typography's styling, which would otherwise restyle the rendered diagram."""
-    return f'<pre class="not-prose mermaid">{html.escape(source)}</pre>'
+def render_react_flow(elements: dict) -> str:
+    """Wrap a {"nodes": [...], "edges": [...]} dict (api/graph_view.py's build_graph_elements) in
+    the `<div class="react-flow-graph">` block static/js/app.js scans for and turns into an
+    interactive pan/zoom/drag/expand-collapse graph (dashboard/static/src/graph/GraphIsland.jsx).
+    The elements ride along as a JSON-encoded data attribute (rather than a separate <script> tag)
+    so the whole block — data included — swaps cleanly via htmx outerHTML like the rest of the
+    panel."""
+    return f'<div class="react-flow-graph not-prose" data-elements="{html.escape(json.dumps(elements))}"></div>'

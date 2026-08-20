@@ -115,6 +115,20 @@ class ArangoConfig(BaseModel):
     articles_collection: str = "articles"
     entities_collection: str = "entities"
     relationships_collection: str = "relationships"
+    jobs_collection: str = "jobs"
+
+
+class ArticleStage(BaseModel):
+    """One step of the article pipeline (scrape -> clean -> extract -> merge), as shown in the
+    dashboard's Data page status stepper/legend (dashboard/templates/partials/_panel_extraction.html)
+    and the status badge each article row gets. `key` must match the stage strings
+    db/articles.py's list_summaries computes (doc.extracted_at/cleaned_text/graph_merged_at
+    nullness) — this is the single place that ordering/labels/colors are defined, so the
+    dashboard never hardcodes its own copy of the stage list."""
+
+    key: str
+    label: str
+    variant: str
 
 
 class CleanConfig(BaseModel):
@@ -225,6 +239,15 @@ class Settings(BaseSettings):
         "ML/Detection",
         "Media/Content Pipeline",
         "Other",
+    ]
+
+    # Ordered article pipeline stages — see ArticleStage above for why this is the single source
+    # of truth for the dashboard's stage badges/legend.
+    article_stages: list[ArticleStage] = [
+        ArticleStage(key="scraped", label="Scraped", variant="neutral"),
+        ArticleStage(key="cleaned", label="Cleaned", variant="amber"),
+        ArticleStage(key="extracted", label="Extracted", variant="emerald"),
+        ArticleStage(key="merged", label="Merged", variant="accent"),
     ]
 
     router: RouterConfig = RouterConfig()

@@ -152,10 +152,15 @@ Three concerns are kept deliberately separate rather than mixed into one setting
 
 Worth stating plainly rather than leaving implicit:
 
-- **Run state lives in memory, in a single process.** The dashboard doesn't persist in-flight run
-  status anywhere durable — restarting it loses track of anything in progress, and it can't be
-  scaled to more than one instance. Acceptable for a single-instance internal tool today; the
-  first thing to revisit if that changes.
+- **Run history is durable now, but the dashboard is still single-instance.** Each job is written
+  through to ArangoDB's `jobs` collection (db/jobs.py) at coarse checkpoints — every pipeline-stage
+  transition, and every merge call as it finishes, not every streamed token — so the Runs page and
+  a run's merge-call transcript survive a restart instead of starting empty. A run that's still
+  in-flight when the process dies has no surviving thread to finish it, so `hydrate_jobs`
+  (api/jobs.py) rewrites it to "error" on the next startup rather than leaving it stuck on a stage
+  it will never leave. What this doesn't buy: the in-memory `JOBS` dict and the concurrency
+  semaphore that bounds active jobs are still process-local, so it still can't be scaled to more
+  than one dashboard instance — the first thing to revisit if that changes.
 - **Name resolution is a judgment call, not a guarantee.** Two posts describing the same system
   in genuinely different words (no shared proper noun, no obvious paraphrase) may end up as two
   separate nodes rather than one — the merge layer is deliberately conservative about this (a

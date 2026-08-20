@@ -4,14 +4,14 @@
   markup in common — one is a table of articles with row actions, the other a rendered diagram —
   so they live in their own files rather than as two branches of one 160-line template.
 
-  Only the extraction view self-polls. The graph view deliberately does not: re-swapping a
-  rendered mermaid diagram on a timer was observed to hang mermaid.render() (see _panel_graph.html
-  for the detail), and a whole-company diagram changes on merge-run boundaries, not continuously.
+  Only the extraction view self-polls. The graph view deliberately does not: it's an interactive
+  React Flow graph the viewer may be mid-pan/zoom/drag/expand-collapse on, and a whole-company
+  diagram only changes on merge-run boundaries anyway — see _panel_graph.html's Refresh link.
 #}
 <div
   id="data-panel-inner"
   {% if selected and view == "extraction" %}
-  hx-get="/data/panel?company={{ selected | urlencode }}&view={{ view }}"
+  hx-get="/data/panel?company={{ selected | urlencode }}&view={{ view }}&page={{ page }}"
   hx-trigger="every 4s"
   hx-swap="outerHTML"
   {% endif %}

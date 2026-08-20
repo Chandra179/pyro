@@ -53,6 +53,7 @@ def connection_params_from_settings(settings: Settings) -> ConnectionParams:
         articles_collection=settings.arango.articles_collection,
         entities_collection=settings.arango.entities_collection,
         relationships_collection=settings.arango.relationships_collection,
+        jobs_collection=settings.arango.jobs_collection,
     )
 
 
@@ -65,6 +66,7 @@ def open_db(
     articles_collection: str = "articles",
     entities_collection: str = "entities",
     relationships_collection: str = "relationships",
+    jobs_collection: str = "jobs",
 ) -> Iterator[Database]:
     db = Database(
         host=host,
@@ -74,6 +76,7 @@ def open_db(
         articles_collection=articles_collection,
         entities_collection=entities_collection,
         relationships_collection=relationships_collection,
+        jobs_collection=jobs_collection,
     )
     try:
         yield db
@@ -93,5 +96,6 @@ def open_db_from_settings(settings: Settings) -> Iterator[Database]:
         articles_collection=params.articles_collection,
         entities_collection=params.entities_collection,
         relationships_collection=params.relationships_collection,
+        jobs_collection=params.jobs_collection,
     ) as db:
         yield db

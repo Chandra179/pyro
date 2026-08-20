@@ -1,0 +1,5 @@
+# Vendored/built, not hand-written.
+static/js/*.min.js
+static/js/graph-island.bundle.js
+static/css/app.css
+static/css/react-flow.css

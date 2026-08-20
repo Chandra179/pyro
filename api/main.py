@@ -6,22 +6,26 @@ Run with `make dashboard` or `uv run uvicorn api.main:app --reload`.
 from __future__ import annotations
 
 import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, Form, HTTPException, Request
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sse_starlette.sse import EventSourceResponse
 
 from api.deps import DbDep
-from api.graph_view import build_graph_mermaid
-from api.jobs import JOBS, list_jobs, submit_job
-from api.render import render_mermaid
+from api.graph_view import build_graph_elements
+from api.jobs import JOBS, hydrate_jobs, list_jobs, submit_job
+from api.render import render_react_flow
 from api.sse import graph_history_events
-from pyro.db import Database
+from pyro.config import get_settings
+from pyro.db import Database, open_db_from_settings
 from pyro.prompts import list_variants
 
 load_dotenv()
@@ -30,7 +34,26 @@ logger = logging.getLogger(__name__)
 
 _DASHBOARD_DIR = Path(__file__).resolve().parents[1] / "dashboard"
 
-app = FastAPI(title="pyro dashboard")
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
+    # Best-effort: a database that isn't reachable yet at startup shouldn't stop the dashboard
+    # from serving — every other route already handles a down database gracefully (see
+    # _data_context's try/except below), and an empty Runs page is no worse than before this
+    # existed.
+    try:
+        with open_db_from_settings(get_settings()) as database:
+            hydrate_jobs(database)
+    except Exception:
+        logger.exception("failed to hydrate job history from the database at startup")
+    yield
+
+
+app = FastAPI(title="pyro dashboard", lifespan=_lifespan)
+# mermaid.min.js (~3.5MB uncompressed, static/js/app.js lazy-loads it) is the main beneficiary,
+# but this also shrinks every HTML/JSON response and the other vendored JS/CSS at no real CPU
+# cost — SSE responses stream below the default minimum_size and are left alone.
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 app.mount(
     "/static", StaticFiles(directory=str(_DASHBOARD_DIR / "static")), name="static"
 )
@@ -136,14 +159,44 @@ async def job_graph_events(request: Request, job_id: str) -> EventSourceResponse
     return EventSourceResponse(graph_history_events(request, job, templates))
 
 
-def _data_context(db: Database, company: str | None, view: str) -> dict:
+# Rows per page in the extraction table (dashboard/templates/partials/_panel_extraction.html).
+# Kept fixed rather than user-configurable — the panel polls itself every 4s, and a per-request
+# page-size choice would need to be threaded through that poll URL for no real benefit yet.
+_ARTICLES_PAGE_SIZE = 50
+
+
+def _data_context(
+    db: Database, company: str | None, view: str, page: int = 1
+) -> dict:
     view = view if view in ("extraction", "graph") else "extraction"
+    page = max(page, 1)
+    article_stages = get_settings().article_stages
     try:
         companies = db.list_company_names()
         selected = (
             company if company in companies else (companies[0] if companies else None)
         )
-        articles = db.list_articles(selected) if selected else []
+        # Only the extraction view renders articles — skip the fetch entirely for the graph view,
+        # which never uses it, rather than paying for a page of article rows on every poll of a
+        # tab that can't display them.
+        articles, total_articles, total_pages = [], 0, 1
+        if selected and view == "extraction":
+            articles, total_articles = db.list_article_summaries(
+                selected,
+                limit=_ARTICLES_PAGE_SIZE,
+                offset=(page - 1) * _ARTICLES_PAGE_SIZE,
+            )
+            total_pages = max(1, -(-total_articles // _ARTICLES_PAGE_SIZE))
+            if page > total_pages:
+                # Only reachable via a hand-edited URL (a stale page number after articles were
+                # deleted elsewhere) — re-fetch once at the corrected offset rather than showing
+                # an empty page with a mismatched "Page N of M".
+                page = total_pages
+                articles, total_articles = db.list_article_summaries(
+                    selected,
+                    limit=_ARTICLES_PAGE_SIZE,
+                    offset=(page - 1) * _ARTICLES_PAGE_SIZE,
+                )
         graph = (
             {
                 "entities": db.list_entities(selected),
@@ -159,19 +212,27 @@ def _data_context(db: Database, company: str | None, view: str) -> dict:
             "selected": None,
             "view": view,
             "articles": [],
+            "page": 1,
+            "total_pages": 1,
+            "total_articles": 0,
             "graph": {"entities": [], "relationships": []},
             "graph_html": None,
             "db_error": str(exc),
+            "article_stages": article_stages,
         }
-    graph_source = build_graph_mermaid(graph["entities"], graph["relationships"])
+    graph_elements = build_graph_elements(graph["entities"], graph["relationships"])
     return {
         "companies": companies,
         "selected": selected,
         "view": view,
         "articles": articles,
+        "page": page,
+        "total_pages": total_pages,
+        "total_articles": total_articles,
         "graph": graph,
-        "graph_html": render_mermaid(graph_source) if graph_source else None,
+        "graph_html": render_react_flow(graph_elements) if graph_elements["nodes"] else None,
         "db_error": None,
+        "article_stages": article_stages,
     }
 
 
@@ -181,9 +242,10 @@ def data_page(
     db: DbDep,
     company: str | None = None,
     view: str = "extraction",
+    page: int = 1,
 ) -> HTMLResponse:
     return templates.TemplateResponse(
-        request, "data.html", _data_context(db, company, view)
+        request, "data.html", _data_context(db, company, view, page)
     )
 
 
@@ -193,9 +255,10 @@ def data_panel(
     db: DbDep,
     company: str | None = None,
     view: str = "extraction",
+    page: int = 1,
 ) -> HTMLResponse:
     return templates.TemplateResponse(
-        request, "partials/data_panel.html", _data_context(db, company, view)
+        request, "partials/data_panel.html", _data_context(db, company, view, page)
     )
 
 
@@ -218,12 +281,13 @@ def delete_article_route(
     article_id: str,
     company: str,
     view: str = "extraction",
+    page: int = 1,
 ) -> HTMLResponse:
     # Ownership check before deleting, so an article id alone can't delete another company's row.
     if db.get_article_for_company(company, article_id) is not None:
         db.delete_article(article_id)
     return templates.TemplateResponse(
-        request, "partials/data_panel.html", _data_context(db, company, view)
+        request, "partials/data_panel.html", _data_context(db, company, view, page)
     )
 
 

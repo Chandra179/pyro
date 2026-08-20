@@ -35,6 +35,7 @@ class ConnectionParams:
     articles_collection: str
     entities_collection: str
     relationships_collection: str
+    jobs_collection: str
 
 
 # Persistent indexes, per collection. Every read path in the repositories filters (and usually
@@ -59,6 +60,14 @@ _ARTICLE_INDEXES = [
         "fields": ["company_name", "cleaned_text"],
         "name": "idx_articles_company_name_cleaned_text",
     },
+    # Backs list_summaries' paginated, newest-first read (the dashboard's extraction table) —
+    # without this, LIMIT with an offset still has to scan and sort every one of the company's
+    # articles before it can return one page.
+    {
+        "type": "persistent",
+        "fields": ["company_name", "scraped_at"],
+        "name": "idx_articles_company_name_scraped_at",
+    },
 ]
 
 _ENTITY_INDEXES = [
@@ -78,6 +87,11 @@ _RELATIONSHIP_INDEXES = [
         "fields": ["company_name", "source_key"],
         "name": "idx_relationships_company_name_source_key",
     },
+]
+
+_JOB_INDEXES = [
+    # Backs list_recent's ORDER — the Runs page and startup hydration both want newest-first.
+    {"type": "persistent", "fields": ["created_at"], "name": "idx_jobs_created_at"},
 ]
 
 _MIGRATION_HINT = (
@@ -129,6 +143,7 @@ def _bootstrap(db: StandardDatabase, params: ConnectionParams) -> None:
     _ensure_collection(
         db, params.relationships_collection, edge=True, indexes=_RELATIONSHIP_INDEXES
     )
+    _ensure_collection(db, params.jobs_collection, edge=False, indexes=_JOB_INDEXES)
 
 
 def connect(params: ConnectionParams) -> StandardDatabase:

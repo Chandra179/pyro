@@ -80,11 +80,13 @@ details:has(> pre:empty) {
 }
 
 /* The graph view's diagram (dashboard/templates/partials/data_panel.html) renders via
-   api/render.py's render_mermaid, the same `<pre class="mermaid">` markup the old doc-modal
-   used — centered and horizontally scrollable for whole-company diagrams wider than the
-   viewport. */
-pre.mermaid {
-  display: flex;
-  justify-content: center;
-  overflow-x: auto;
+   api/render.py's render_react_flow into this div, which static/js/app.js mounts into an
+   interactive React Flow graph (dashboard/static/src/graph/GraphIsland.jsx). React Flow sizes
+   itself to its container's *actual* rendered box (not intrinsic content), so this needs an
+   explicit height — dropped into an auto-height div it collapses to 0px and never becomes
+   visible. */
+.react-flow-graph {
+  width: 100%;
+  height: 70vh;
+  min-height: 420px;
 }

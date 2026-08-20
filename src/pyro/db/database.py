@@ -14,6 +14,7 @@ from typing import Any, Self
 from pyro.db.articles import ArticleRepository
 from pyro.db.connection import ConnectionParams, connect
 from pyro.db.entities import EntityRepository
+from pyro.db.jobs import JobRepository
 from pyro.db.models import Article
 from pyro.db.relationships import RelationshipRepository
 
@@ -28,6 +29,7 @@ class Database:
         articles_collection: str = "articles",
         entities_collection: str = "entities",
         relationships_collection: str = "relationships",
+        jobs_collection: str = "jobs",
     ):
         params = ConnectionParams(
             host=host,
@@ -37,6 +39,7 @@ class Database:
             articles_collection=articles_collection,
             entities_collection=entities_collection,
             relationships_collection=relationships_collection,
+            jobs_collection=jobs_collection,
         )
         self._db = connect(params)
         self.articles = ArticleRepository(self._db, articles_collection)
@@ -44,6 +47,7 @@ class Database:
         self.relationships = RelationshipRepository(
             self._db, relationships_collection, entities_collection
         )
+        self.jobs = JobRepository(self._db, jobs_collection)
 
     # The underlying connection is process-wide and pooled (see db.connection), so an individual
     # Database has no resources to release. Kept so `with open_db(...)` reads naturally and so a
@@ -89,6 +93,11 @@ class Database:
 
     def list_articles(self, company_name: str) -> list[Article]:
         return self.articles.list_articles(company_name)
+
+    def list_article_summaries(
+        self, company_name: str, limit: int, offset: int
+    ) -> tuple[list[dict], int]:
+        return self.articles.list_summaries(company_name, limit, offset)
 
     def get_article_for_company(self, company_name: str, article_id: str) -> Article | None:
         return self.articles.get_for_company(company_name, article_id)
@@ -184,3 +193,17 @@ class Database:
         self.articles.reset_graph_merged(company_name)
         self.relationships.delete_for_company(company_name)
         self.entities.delete_for_company(company_name)
+
+    # --- jobs: dashboard pipeline-run history (api/jobs.py) ---
+
+    def save_job(self, doc: dict[str, Any]) -> None:
+        self.jobs.save(doc)
+
+    def get_job(self, job_id: str) -> dict[str, Any] | None:
+        return self.jobs.get(job_id)
+
+    def list_jobs(self, limit: int = 50) -> list[dict[str, Any]]:
+        return self.jobs.list_recent(limit)
+
+    def delete_job(self, job_id: str) -> None:
+        self.jobs.delete(job_id)

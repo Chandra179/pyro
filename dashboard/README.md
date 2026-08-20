@@ -20,16 +20,21 @@ other:
   - `api/jobs.py` — in-memory job store; runs scrape → clean → extract → merge-graph on a
     background thread per submitted job
   - `api/sse.py` — the merge-run event stream a running job's page subscribes to
-  - `api/graph_view.py` — builds Mermaid flowchart source from a company's stored entity graph
-  - `api/render.py` — wraps Mermaid source in the markup mermaid.js scans for client-side
+  - `api/graph_view.py` — builds React Flow graph elements from a company's stored entity graph
+  - `api/render.py` — wraps those elements in the markup app.js scans for client-side
   - `api/deps.py` — the request-scoped `Database`/`Settings` dependencies routes use
 - **`dashboard/`** (this directory) — templates and static assets only, no logic:
   - `templates/` — Jinja2, extending `base.html`; see below
-  - `static/js/app.js` — sidebar/dark-mode/mermaid/modal/SSE-autoscroll behavior; the one thing
-    that has to stay inline in `base.html` is the dark-mode bootstrap script, so it runs before
-    first paint
+  - `static/js/app.js` — sidebar/dark-mode/react-flow-loader/modal/SSE-autoscroll behavior; the
+    one thing that has to stay inline in `base.html` is the dark-mode bootstrap script, so it runs
+    before first paint
+  - `static/src/graph/` — the Graph tab's React Flow island source (`main.jsx` mount/scan entry,
+    `GraphIsland.jsx` the component incl. per-domain expand/collapse, `layout.js` the dagre
+    auto-layout pass) — bundled with React + React Flow + dagre by `npm run build:js` into the
+    committed `static/js/graph-island.bundle.js` (see **JS lint/format** below)
   - `static/src/input.css` → `static/css/app.css` — Tailwind v4 source and its compiled,
-    committed-in-git output (see **CSS workflow** below)
+    committed-in-git output (see **CSS workflow** below); `static/css/react-flow.css` is React
+    Flow's own vendored stylesheet, copied from `node_modules/reactflow/dist/style.css`
 
 ## Template structure
 
@@ -45,7 +50,7 @@ base.html                        sidebar, header, theme toggle, script includes
         └── partials/data_panel.html   dispatcher: db-error / no-companies / extraction / graph
             ├── partials/_panel_extraction.html   article table (self-polls every 4s)
             │   └── partials/article_modal.html      row "View" swaps this into the preview modal
-            └── partials/_panel_graph.html        one rendered Mermaid diagram, no self-poll
+            └── partials/_panel_graph.html        one interactive React Flow graph, no self-poll
 
 partials/_macros.html            shared `badge()` macro (status/stage pills)
 ```
@@ -72,3 +77,31 @@ classes or `input.css`, regenerate it:
 npm install       # once
 npm run build:css # or: npm run watch:css
 ```
+
+## JS lint/format
+
+`static/js/app.js` and `static/src/graph/*.jsx` are the hand-written JS/JSX here (`htmx.min.js`,
+`htmx-ext-sse.min.js`, and the built `graph-island.bundle.js` are vendored/generated and excluded
+from both). After editing either:
+
+```bash
+npm run lint:js         # eslint, or from the repo root: make lint-js
+npm run format:js:check # prettier --check (npx prettier --write to fix)
+```
+
+Not part of `make lint` — that target only needs `uv sync` (`make install`), and folding this in
+would make it fail for anyone who hasn't also run `npm install` here.
+
+## React Flow graph bundle
+
+The Graph tab's diagram is a small React app (`static/src/graph/`), not plain JS like the rest of
+the dashboard — React Flow has no drop-in UMD build like Cytoscape's did, so it has to be bundled.
+After editing anything under `static/src/graph/`, rebuild the committed bundle:
+
+```bash
+npm run build:js   # esbuild --bundle --minify, or: npm run watch:js
+```
+
+`static/js/graph-island.bundle.js` is committed (same convention as `static/css/app.css`) so the
+FastAPI app has no JS build step of its own at runtime — only contributors editing the graph
+island's source need Node.

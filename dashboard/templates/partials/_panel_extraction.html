@@ -1,25 +1,38 @@
 {#
-  Extraction view: every article for the selected company and where it sits in the pipeline.
-  Rendered inside partials/data_panel.html, which owns the 4s poll wrapper and the error/empty
-  states — this file assumes `selected` is set and the database read succeeded.
+  Extraction view: one page of articles for the selected company and where each sits in the
+  pipeline. Rendered inside partials/data_panel.html, which owns the 4s poll wrapper and the
+  error/empty states — this file assumes `selected` is set and the database read succeeded.
+
+  `articles` is a page of lightweight summary dicts (db/articles.py's list_summaries), not full
+  Article documents — `stage`/`entity_count` are computed server-side in AQL rather than here, so
+  this template never needs cleaned_text or the full extracted_graph blob just to render a badge
+  and a count.
+
+  Pager state (`page`) rides along on every URL below — the row/table actions and the poll's own
+  next `hx-get` (data_panel.html) all carry it forward, the same way `company`/`view` already do,
+  so a poll tick or a delete never silently bounces the viewer back to page 1.
 #}
 {% from "partials/_macros.html" import badge %}
-{% set stage_variants = {
-  "scraped": "neutral",
-  "cleaned": "amber",
-  "extracted": "emerald",
-} %}
+{% set stage_ns = namespace(labels={}, variants={}) %}
+{% for s in article_stages %}
+{% set _ = stage_ns.labels.update({s.key: s.label}) %}
+{% set _ = stage_ns.variants.update({s.key: s.variant}) %}
+{% endfor %}
+{% set stage_labels = stage_ns.labels %}
+{% set stage_variants = stage_ns.variants %}
 <div class="mb-3 flex items-center justify-between">
   <h2 class="text-base font-medium">Extraction pipeline · {{ selected }}</h2>
   <div class="flex items-center gap-3">
-    <span class="text-xs text-slate-400 dark:text-slate-600">{{ articles | length }} article{{ "s" if articles | length != 1 }} · refreshes every 4s</span>
-    {% if articles %}
+    <span class="text-xs text-slate-400 dark:text-slate-600">
+      {{ total_articles }} article{{ "s" if total_articles != 1 }}{% if total_pages > 1 %} · page {{ page }} of {{ total_pages }}{% endif %} · refreshes every 4s
+    </span>
+    {% if total_articles %}
     <button
       type="button"
       hx-delete="/data/articles?company={{ selected | urlencode }}&view=extraction"
       hx-target="#data-panel-inner"
       hx-swap="outerHTML"
-      hx-confirm="Delete all {{ articles | length }} extracted article{{ "s" if articles | length != 1 }} for {{ selected }}? This cannot be undone."
+      hx-confirm="Delete all {{ total_articles }} extracted article{{ "s" if total_articles != 1 }} for {{ selected }}? This cannot be undone."
       class="rounded-md border border-rose-200 px-2 py-1 text-xs font-medium text-rose-600 hover:bg-rose-50 dark:border-rose-500/30 dark:text-rose-400 dark:hover:bg-rose-500/10"
     >
       Delete all
@@ -41,13 +54,6 @@
     </thead>
     <tbody class="divide-y divide-slate-100 dark:divide-slate-800">
       {% for a in articles %}
-      {% if a.extracted_at %}
-        {% set stage = "extracted" %}
-      {% elif a.cleaned_text %}
-        {% set stage = "cleaned" %}
-      {% else %}
-        {% set stage = "scraped" %}
-      {% endif %}
       <tr class="bg-white dark:bg-slate-900/60">
         <td class="max-w-xs px-4 py-2">
           <p class="truncate font-medium">{{ a.title or "(untitled)" }}</p>
@@ -56,11 +62,11 @@
           </a>
         </td>
         <td class="px-4 py-2">
-          {{ badge(stage, stage_variants[stage]) }}
+          {{ badge(stage_labels[a.stage], stage_variants[a.stage]) }}
         </td>
         <td class="px-4 py-2 text-xs text-slate-500 dark:text-slate-400">
-          {% if a.extracted_graph %}
-            {{ a.extracted_graph.entities | length }} entit{{ "y" if a.extracted_graph.entities | length == 1 else "ies" }}
+          {% if a.entity_count is not none %}
+            {{ a.entity_count }} entit{{ "y" if a.entity_count == 1 else "ies" }}
           {% else %}
             —
           {% endif %}
@@ -85,7 +91,7 @@
             </button>
             <button
               type="button"
-              hx-delete="/data/article/{{ a.id | urlencode }}?company={{ selected | urlencode }}&view=extraction"
+              hx-delete="/data/article/{{ a.id | urlencode }}?company={{ selected | urlencode }}&view=extraction&page={{ page }}"
               hx-target="#data-panel-inner"
               hx-swap="outerHTML"
               hx-confirm="Delete '{{ a.title or a.id }}'? This cannot be undone."
@@ -104,6 +110,37 @@
     </tbody>
   </table>
 </div>
+{% if total_pages > 1 %}
+<div class="mt-3 flex items-center justify-end gap-2">
+  <button
+    type="button"
+    {% if page > 1 %}
+    hx-get="/data/panel?company={{ selected | urlencode }}&view=extraction&page={{ page - 1 }}"
+    hx-target="#data-panel-inner"
+    hx-swap="outerHTML"
+    {% else %}
+    disabled
+    {% endif %}
+    class="rounded-md border border-slate-200 px-2 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent dark:border-slate-800 dark:text-slate-300 dark:hover:bg-slate-800"
+  >
+    Previous
+  </button>
+  <span class="text-xs text-slate-400 dark:text-slate-600">Page {{ page }} of {{ total_pages }}</span>
+  <button
+    type="button"
+    {% if page < total_pages %}
+    hx-get="/data/panel?company={{ selected | urlencode }}&view=extraction&page={{ page + 1 }}"
+    hx-target="#data-panel-inner"
+    hx-swap="outerHTML"
+    {% else %}
+    disabled
+    {% endif %}
+    class="rounded-md border border-slate-200 px-2 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent dark:border-slate-800 dark:text-slate-300 dark:hover:bg-slate-800"
+  >
+    Next
+  </button>
+</div>
+{% endif %}
 {% else %}
 <p class="text-sm text-slate-500 dark:text-slate-500">No articles scraped yet for {{ selected }}.</p>
 {% endif %}

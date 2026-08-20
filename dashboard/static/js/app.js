@@ -1,5 +1,5 @@
 /*
- * Dashboard behavior: off-canvas sidebar, dark-mode toggle, mermaid rendering, modal backdrop.
+ * Dashboard behavior: off-canvas sidebar, dark-mode toggle, react flow graph mounting, modal backdrop.
  *
  * This used to be ~120 lines of inline <script> in base.html, which meant it was re-sent on every
  * page load, never cached, and invisible to any linter or formatter. The one piece that has to
@@ -8,6 +8,11 @@
  *
  * Loaded with `defer`, so the DOM is parsed before any of this runs.
  */
+
+/* exported toggleMergeHistory */
+// toggleMergeHistory is called from an inline onclick= in
+// dashboard/templates/partials/graph_history.html, invisible to a linter reading this file in
+// isolation — the directive above tells no-unused-vars it has a real caller.
 
 // --- off-canvas sidebar (below md/768px) ----------------------------------------------------
 // Toggled by the header hamburger and closed by tapping the backdrop or navigating (nav links do
@@ -46,78 +51,72 @@ document.getElementById("sidebar-toggle").addEventListener("click", function () 
   });
 })();
 
-// --- mermaid --------------------------------------------------------------------------------
-// The graph view's diagram comes back from the server as a `<pre class="mermaid">` block (see
-// api/render.py) — mermaid.js scans for that class and swaps in an inline SVG. startOnLoad is off
-// because a diagram can arrive either in the initial server render or later via an htmx swap, so
-// rendering is driven explicitly from both places below instead.
-function currentMermaidTheme() {
-  return document.documentElement.classList.contains("dark") ? "dark" : "default";
-}
+// --- react flow (interactive entity graph) ---------------------------------------------------
+// The graph view's diagram comes back from the server as a `<div class="react-flow-graph"
+// data-elements="...">` block (see api/render.py) — this scans for that class and mounts a
+// pan/zoom/drag/expand-collapse React Flow graph (dashboard/static/src/graph/GraphIsland.jsx,
+// bundled with React + React Flow + dagre into graph-island.bundle.js by `npm run build:js`).
+// Colors are picked once at mount time based on the current theme (isDarkMode lives in
+// static/src/graph/main.jsx, read there rather than passed in from here) rather than kept live —
+// same limitation the old Cytoscape/Mermaid integrations had: a diagram already on screen doesn't
+// repaint itself if dark mode is toggled after the fact, only a fresh render (page load / htmx
+// swap) picks up the new theme.
 
-mermaid.initialize({ startOnLoad: false, theme: currentMermaidTheme() });
+// graph-island.bundle.js is ~380KB — loaded on demand, the first time a `.react-flow-graph` node
+// actually shows up in the DOM, instead of unconditionally in every page's <head> (most pages
+// never render a diagram, and the Data page's *default* tab is Extraction, not Graph). A
+// <script> tag gated on the current page/tab doesn't work for this: the Data page's tab switch
+// is a partial htmx swap (partials/data_shell.html's hx-select) that never re-processes a
+// fetched response's <head>, so a tag that only appears in the Graph tab's own render would
+// never load if the viewer arrived on the Extraction tab and clicked over — this has to be
+// driven off DOM content, not off routing.
+var reactFlowLoadPromise = null;
+function loadReactFlow() {
+  if (!reactFlowLoadPromise) {
+    reactFlowLoadPromise = new Promise(function (resolve, reject) {
+      var css = document.createElement("link");
+      css.rel = "stylesheet";
+      css.href = "/static/css/react-flow.css";
+      document.head.appendChild(css);
 
-var mermaidRenderSeq = 0;
-
-// mermaid.render()'s internal text-measurement step depends on layout having actually settled
-// (getBBox/getComputedTextLength on its offscreen sandbox). Called right at DOMContentLoaded it
-// works — the browser has already painted. Called synchronously from inside an htmx:afterSwap
-// handler, before the browser has had a chance to paint the swap it just made, the returned
-// promise was observed to hang indefinitely (mermaid.js has open upstream issues describing
-// exactly this "works on load, hangs on dynamic insert" pattern). Yielding a frame first gives
-// the browser that paint.
-function nextFrame() {
-  return new Promise(function (resolve) {
-    requestAnimationFrame(function () {
-      requestAnimationFrame(resolve);
+      var script = document.createElement("script");
+      script.src = "/static/js/graph-island.bundle.js";
+      script.onload = resolve;
+      script.onerror = function () {
+        reactFlowLoadPromise = null; // let a later render retry instead of failing forever
+        reject(new Error("failed to load graph-island.bundle.js"));
+      };
+      document.head.appendChild(script);
     });
-  });
-}
-
-async function renderMermaidNode(node) {
-  var source = node.textContent;
-  var id = "mermaid-graph-" + ++mermaidRenderSeq;
-  try {
-    await nextFrame();
-    var result = await mermaid.render(id, source);
-    // The node's container can be replaced wholesale (outerHTML) by an htmx swap (e.g. a
-    // Delete-graph click) while we were awaiting layout — only attach if it's still around.
-    if (document.body.contains(node)) {
-      node.innerHTML = result.svg;
-      node.setAttribute("data-processed", "true");
-    }
-  } catch (err) {
-    console.error("Mermaid render failed:", err);
   }
+  return reactFlowLoadPromise;
 }
 
-async function renderMermaidIn(root) {
+function renderReactFlowIn(root) {
   if (!root || !root.querySelectorAll) return;
-  var nodes = root.querySelectorAll(".mermaid:not([data-processed])");
+  var nodes = root.querySelectorAll(".react-flow-graph:not([data-processed])");
   if (!nodes.length) return;
-  // Re-initialize with the current theme each time rather than trusting the call above — that one
-  // only ran once at page load, so a diagram rendered after a later dark-mode toggle would
-  // otherwise use stale (mismatched) colors.
-  mermaid.initialize({ startOnLoad: false, theme: currentMermaidTheme() });
-  // Sequential, not Promise.all: mermaid.render() draws into a sandbox element it manages
-  // internally (not our own DOM node), so two calls in flight at once corrupt each other's
-  // sandbox state and throw deep in d3 (`Cannot read properties of null (reading
-  // 'getAttribute')`).
-  for (var node of nodes) {
-    await renderMermaidNode(node);
-  }
+  loadReactFlow()
+    .then(function () {
+      // window.PyroGraph.renderIn is set by graph-island.bundle.js (see main.jsx) — it does its
+      // own :not([data-processed]) scan, so it's safe to just hand it the same root.
+      window.PyroGraph.renderIn(root);
+    })
+    .catch(function (err) {
+      console.error(err);
+    });
 }
 
-renderMermaidIn(document.body);
+renderReactFlowIn(document.body);
 
 document.body.addEventListener("htmx:afterSwap", function () {
   // Not evt.detail.target: for an outerHTML swap that value is the old node htmx just replaced
   // (already removed from the document — detail.target.isConnected is false by the time this
   // listener runs), not the new one. document.body is always live, and the :not([data-processed])
-  // filter in renderMermaidIn already limits this to nodes that actually need drawing, so
-  // re-scanning the whole page on every swap is cheap and correct regardless of which nested
-  // element the swap actually touched.
-  renderMermaidIn(document.body);
+  // filter already limits this to nodes that actually need drawing, so re-scanning the whole
+  // page on every swap is cheap and correct regardless of which nested element the swap
+  // actually touched.
+  renderReactFlowIn(document.body);
 });
 
 // --- modal ----------------------------------------------------------------------------------

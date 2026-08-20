@@ -48,6 +48,4 @@ extraction_max_tokens: 100000
 graph_model: "deepseek/deepseek-v4-flash-0731"
 
 router:
-  # Per-request cap so a stalled model raises a timeout and triggers fallback —
-  # tighter than config.py's default (60s).
-  timeout: 20
+  timeout: 9000

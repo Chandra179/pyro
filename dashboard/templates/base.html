@@ -23,7 +23,12 @@
     <link rel="stylesheet" href="{{ url_for('static', path='css/app.css') }}" />
     <script src="{{ url_for('static', path='js/htmx.min.js') }}"></script>
     <script src="{{ url_for('static', path='js/htmx-ext-sse.min.js') }}"></script>
-    <script src="{{ url_for('static', path='js/mermaid.min.js') }}"></script>
+    {# mermaid.min.js (~3.5MB) is deliberately not included here: static/js/app.js lazy-loads it
+       on demand, the first time a `.mermaid` node actually shows up in the DOM. A <script> tag
+       gated on the current page/tab doesn't work for this — the Data page's tab switch is a
+       partial htmx swap (partials/data_shell.html's hx-select) that never re-processes a fetched
+       response's <head>, so a tag that only appears in the Graph tab's own render would never
+       load if the viewer arrived on the Extraction tab and then clicked over. #}
     {# defer: app.js touches elements defined below, and must not block first paint. #}
     <script src="{{ url_for('static', path='js/app.js') }}" defer></script>
   </head>

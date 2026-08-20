@@ -82,15 +82,19 @@ it.
 
 ### Storage (`src/pyro/db/`)
 
-One ArangoDB database, three collections, all scoped by `company_name`:
+One ArangoDB database, four collections:
 
-- `articles` (document) — pipeline state per scraped article (raw HTML → cleaned → extracted),
-  see `db/articles.py`.
-- `entities` (document) — resolved systems/services, see `db/entities.py`.
-- `relationships` (**edge** collection) — `_from`/`_to` handles into `entities`, so the graph is
-  AQL-traversable rather than a flat list to reassemble in memory, see `db/relationships.py`.
+- `articles` (document, scoped by `company_name`) — pipeline state per scraped article (raw HTML →
+  cleaned → extracted), see `db/articles.py`.
+- `entities` (document, scoped by `company_name`) — resolved systems/services, see
+  `db/entities.py`.
+- `relationships` (**edge** collection, scoped by `company_name`) — `_from`/`_to` handles into
+  `entities`, so the graph is AQL-traversable rather than a flat list to reassemble in memory, see
+  `db/relationships.py`.
+- `jobs` (document, not company-scoped — the dashboard's Runs page lists every company's jobs
+  together) — dashboard pipeline-run history, see `db/jobs.py` and `api/jobs.py`.
 
-`Database` (`db/database.py`) is the facade over all three — import it from `pyro.db`, not from
+`Database` (`db/database.py`) is the facade over all four — import it from `pyro.db`, not from
 the submodules directly, so internal layout can move freely. `open_db_from_settings` is the
 standard way to get a connected instance scoped to a `Settings`.
 
@@ -114,11 +118,18 @@ Two halves that only communicate over HTTP:
 
 - **`api/`** (repo root) — FastAPI app; the only code that touches the pipeline or database.
   `api/jobs.py` runs the full scrape→clean→extract→merge-graph pipeline per submitted job on a
-  background thread with an in-memory job store (run state is **not** persisted — restarting the
-  dashboard loses in-flight job status, and it can't scale beyond one instance; this is a known,
-  accepted limitation, not a bug to silently fix). `api/sse.py` streams merge-call output live via
+  background thread. Run state lives in an in-memory `JOBS` dict but is also written through to
+  ArangoDB's `jobs` collection at coarse checkpoints (stage transitions, each merge call finishing
+  — not every streamed token, see `api/sse.py`'s docstring for why that granularity matters), so
+  `hydrate_jobs` can repopulate `JOBS` from disk on startup and the Runs page survives a dashboard
+  restart. A run still in-flight when the process dies is rewritten to "error" on the next
+  startup rather than left showing a stage it will never leave. This is still single-instance —
+  `JOBS` and the `_JOB_SLOTS` concurrency semaphore stay process-local, so it can't scale beyond
+  one dashboard instance; that part remains a known, accepted limitation, not a bug to silently
+  fix. `api/sse.py` streams merge-call output live via
   SSE (a push, not a poll — replaced an earlier design that re-sent the whole transcript every
-  second). `api/graph_view.py` + `api/render.py` build the Mermaid diagram from stored entities.
+  second). `api/graph_view.py` + `api/render.py` build the interactive React Flow graph from
+  stored entities.
 - **`dashboard/`** — Jinja2 templates + static assets only, zero Python. See
   [`dashboard/README.md`](dashboard/README.md) for the template inheritance tree and two
   rendering patterns worth knowing before touching either page: the Runs page's job card is never

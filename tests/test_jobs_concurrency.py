@@ -6,7 +6,7 @@ nothing throttling total load."""
 import threading
 import time
 from contextlib import contextmanager
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import api.jobs as jobs_module
 from api.jobs import Job, _run_job
@@ -14,7 +14,9 @@ from api.jobs import Job, _run_job
 
 @contextmanager
 def _fake_open_db(settings):
-    yield object()
+    # MagicMock rather than a bare object(): _run_job now calls database.save_job(...) at every
+    # stage checkpoint, which this fake doesn't need to verify, just tolerate.
+    yield MagicMock()
 
 
 async def _fake_resolve_urls(url, settings):

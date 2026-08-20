@@ -1,16 +1,29 @@
 {
   "name": "pyro-dashboard",
   "private": true,
+  "type": "module",
   "description": "Tailwind build for the pyro dashboard. Not a runtime dependency of the FastAPI app — only needed when editing templates.",
   "scripts": {
     "build:css": "tailwindcss -i ./static/src/input.css -o ./static/css/app.css --minify",
-    "watch:css": "tailwindcss -i ./static/src/input.css -o ./static/css/app.css --watch"
+    "watch:css": "tailwindcss -i ./static/src/input.css -o ./static/css/app.css --watch",
+    "build:js": "esbuild static/src/graph/main.jsx --bundle --minify --format=iife --jsx=automatic --outfile=static/js/graph-island.bundle.js",
+    "watch:js": "npm run build:js -- --watch",
+    "lint:js": "eslint static/js/app.js static/src/graph",
+    "format:js:check": "prettier --check static/js/app.js static/src/graph"
   },
   "devDependencies": {
+    "@dagrejs/dagre": "^3.1.1",
+    "@eslint/js": "^9.19.0",
     "@tailwindcss/cli": "^4.3.3",
     "@tailwindcss/typography": "^0.5.20",
+    "esbuild": "^0.28.2",
+    "eslint": "^9.19.0",
+    "eslint-plugin-react": "^7.37.5",
     "htmx-ext-sse": "^2.2.4",
-    "mermaid": "^11.16.1",
+    "prettier": "^3.4.2",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "reactflow": "^11.11.4",
     "tailwindcss": "^4.3.3"
   }
 }
