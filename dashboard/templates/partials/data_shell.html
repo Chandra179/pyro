@@ -57,27 +57,6 @@
     </div>
   </div>
 
-  {% if view == "extraction" %}
-  {#
-    Legend for the Status column below: the article pipeline's stages, in order, sourced from
-    Settings.article_stages (src/pyro/config.py) — the same list db/articles.py's
-    list_summaries derives each row's `stage` from, so this never drifts out of sync with what
-    the badges in the table actually mean.
-  #}
-  <div class="mt-6 flex flex-wrap items-center gap-x-2 gap-y-1 border-t border-slate-100 pt-4 text-xs text-slate-400 dark:border-slate-800 dark:text-slate-600">
-    <span class="mr-1">Status:</span>
-    {% from "partials/_macros.html" import badge %}
-    {% for stage in article_stages %}
-    {{ badge(stage.label, stage.variant) }}
-    {% if not loop.last %}
-    <svg class="h-3 w-3 shrink-0 text-slate-300 dark:text-slate-700" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-      <path stroke-linecap="round" stroke-linejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
-    </svg>
-    {% endif %}
-    {% endfor %}
-  </div>
-  {% endif %}
-
   <div id="data-panel" class="mt-6">
     {% include "partials/data_panel.html" %}
   </div>
