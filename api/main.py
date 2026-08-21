@@ -8,7 +8,6 @@ from __future__ import annotations
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -17,13 +16,11 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from sse_starlette.sse import EventSourceResponse
 
 from api.deps import DbDep
 from api.graph_view import build_graph_elements
-from api.jobs import JOBS, hydrate_jobs, list_jobs, submit_job
+from api.jobs import hydrate_jobs, submit_job
 from api.render import render_react_flow
-from api.sse import graph_history_events
 from pyro.config import get_settings
 from pyro.db import Database, open_db_from_settings
 from pyro.prompts import list_variants
@@ -39,8 +36,9 @@ _DASHBOARD_DIR = Path(__file__).resolve().parents[1] / "dashboard"
 async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Best-effort: a database that isn't reachable yet at startup shouldn't stop the dashboard
     # from serving — every other route already handles a down database gracefully (see
-    # _data_context's try/except below), and an empty Runs page is no worse than before this
-    # existed.
+    # _data_context's try/except below). hydrate_jobs repopulates JOBS (still needed by the
+    # background job runner in api/jobs.py) and rewrites any job left mid-stage by a prior
+    # process's death to "error", so it isn't skipped even though no page lists jobs anymore.
     try:
         with open_db_from_settings(get_settings()) as database:
             hydrate_jobs(database)
@@ -60,30 +58,6 @@ app.mount(
 templates = Jinja2Templates(directory=str(_DASHBOARD_DIR / "templates"))
 
 
-def _timeago(value: str) -> str:
-    """Coarse relative time for a job's `created_at` (see api/jobs.py) — "4m ago" rather than a
-    raw ISO timestamp. A running job's card polls its summary every 2s (job_status.html), so this
-    stays current for the case that matters; a finished job's card renders once and doesn't need
-    to tick live."""
-    try:
-        then = datetime.fromisoformat(value)
-    except (TypeError, ValueError):
-        return ""
-    seconds = int((datetime.now(UTC) - then).total_seconds())
-    if seconds < 60:
-        return "just now"
-    minutes = seconds // 60
-    if minutes < 60:
-        return f"{minutes}m ago"
-    hours = minutes // 60
-    if hours < 24:
-        return f"{hours}h ago"
-    return f"{hours // 24}d ago"
-
-
-templates.env.filters["timeago"] = _timeago
-
-
 def _template_choices() -> list[dict]:
     """Selectable extraction prompt variants for the run form's "Prompt template" dropdown —
     there's only ever a "default" variant today, but this stays data-driven so a new variant
@@ -98,9 +72,7 @@ def _template_options() -> dict:
 @app.get("/", response_class=HTMLResponse)
 def index(request: Request) -> HTMLResponse:
     return templates.TemplateResponse(
-        request,
-        "index.html",
-        {"jobs": list_jobs(), "template_options": _template_options()},
+        request, "index.html", {"template_options": _template_options()}
     )
 
 
@@ -114,13 +86,6 @@ def _resolve_template(raw: str) -> str:
     return raw
 
 
-def _job_or_404(job_id: str):
-    job = JOBS.get(job_id)
-    if job is None:
-        raise HTTPException(status_code=404, detail="job not found")
-    return job
-
-
 @app.post("/jobs", response_class=HTMLResponse)
 def create_job(
     request: Request,
@@ -132,31 +97,9 @@ def create_job(
     variant = _resolve_template(template)
 
     job = submit_job(company_name.strip(), url.strip(), limit, variant)
-    return templates.TemplateResponse(request, "partials/job_status.html", {"job": job})
-
-
-@app.get("/jobs/{job_id}", response_class=HTMLResponse)
-def job_status(request: Request, job_id: str) -> HTMLResponse:
     return templates.TemplateResponse(
-        request, "partials/job_status.html", {"job": _job_or_404(job_id)}
+        request, "partials/run_started.html", {"job": job}
     )
-
-
-@app.get("/jobs/{job_id}/graph-history", response_class=HTMLResponse)
-def job_graph_history(request: Request, job_id: str) -> HTMLResponse:
-    """Static render of a run's merge history. The live view streams over
-    /jobs/{id}/graph-events instead; this stays as the no-JavaScript/after-the-fact rendering and
-    is what a page load of a finished job serves."""
-    return templates.TemplateResponse(
-        request, "partials/graph_history.html", {"job": _job_or_404(job_id)}
-    )
-
-
-@app.get("/jobs/{job_id}/graph-events")
-async def job_graph_events(request: Request, job_id: str) -> EventSourceResponse:
-    """Live merge output as server-sent events — see api/sse.py for the event vocabulary."""
-    job = _job_or_404(job_id)
-    return EventSourceResponse(graph_history_events(request, job, templates))
 
 
 # Rows per page in the extraction table (dashboard/templates/partials/_panel_extraction.html).

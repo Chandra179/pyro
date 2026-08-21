@@ -91,8 +91,9 @@ One ArangoDB database, four collections:
 - `relationships` (**edge** collection, scoped by `company_name`) — `_from`/`_to` handles into
   `entities`, so the graph is AQL-traversable rather than a flat list to reassemble in memory, see
   `db/relationships.py`.
-- `jobs` (document, not company-scoped — the dashboard's Runs page lists every company's jobs
-  together) — dashboard pipeline-run history, see `db/jobs.py` and `api/jobs.py`.
+- `jobs` (document, not company-scoped) — dashboard pipeline-run history, including each merge
+  call's full output/reasoning; written by `api/jobs.py`, not rendered by any dashboard page (see
+  `db/jobs.py`).
 
 `Database` (`db/database.py`) is the facade over all four — import it from `pyro.db`, not from
 the submodules directly, so internal layout can move freely. `open_db_from_settings` is the
@@ -120,22 +121,18 @@ Two halves that only communicate over HTTP:
   `api/jobs.py` runs the full scrape→clean→extract→merge-graph pipeline per submitted job on a
   background thread. Run state lives in an in-memory `JOBS` dict but is also written through to
   ArangoDB's `jobs` collection at coarse checkpoints (stage transitions, each merge call finishing
-  — not every streamed token, see `api/sse.py`'s docstring for why that granularity matters), so
-  `hydrate_jobs` can repopulate `JOBS` from disk on startup and the Runs page survives a dashboard
-  restart. A run still in-flight when the process dies is rewritten to "error" on the next
-  startup rather than left showing a stage it will never leave. This is still single-instance —
-  `JOBS` and the `_JOB_SLOTS` concurrency semaphore stay process-local, so it can't scale beyond
-  one dashboard instance; that part remains a known, accepted limitation, not a bug to silently
-  fix. `api/sse.py` streams merge-call output live via
-  SSE (a push, not a poll — replaced an earlier design that re-sent the whole transcript every
-  second). `api/graph_view.py` + `api/render.py` build the interactive React Flow graph from
-  stored entities.
+  — including that call's full output/reasoning, not just a summary), so `hydrate_jobs` can
+  repopulate `JOBS` from disk on startup. A run still in-flight when the process dies is rewritten
+  to "error" on the next startup rather than left showing a stage it will never leave. This is
+  still single-instance — `JOBS` and the `_JOB_SLOTS` concurrency semaphore stay process-local, so
+  it can't scale beyond one dashboard instance; that part remains a known, accepted limitation, not
+  a bug to silently fix. There is deliberately no page rendering `JOBS`/the `jobs` collection back
+  — submitting a run (`index.html`) gets a one-shot acknowledgment (`partials/run_started.html`),
+  and progress/output are inspected via ArangoDB directly, not through the dashboard. `api/graph_view.py`
+  + `api/render.py` build the interactive React Flow graph from stored entities.
 - **`dashboard/`** — Jinja2 templates + static assets only, zero Python. See
-  [`dashboard/README.md`](dashboard/README.md) for the template inheritance tree and two
-  rendering patterns worth knowing before touching either page: the Runs page's job card is never
-  wholesale-re-swapped (re-swapping while SSE merge history streams underneath double-appends
-  chunks — htmx's SSE extension has no re-registration guard), while the Data page's shell and
-  panel poll/swap independently.
+  [`dashboard/README.md`](dashboard/README.md) for the template inheritance tree. One rendering
+  pattern worth knowing before touching the Data page: its shell and panel poll/swap independently.
 
 ### Scheduling (`cron/`)
 

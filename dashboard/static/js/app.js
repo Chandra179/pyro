@@ -9,12 +9,6 @@
  * Loaded with `defer`, so the DOM is parsed before any of this runs.
  */
 
-/* exported toggleJobDetail, toggleCallDetail */
-// toggleJobDetail and toggleCallDetail are called from inline onclick= attributes in
-// dashboard/templates/partials/job_status.html and graph_call.html respectively, invisible to
-// a linter reading this file in isolation — the directive above tells no-unused-vars they have
-// real callers.
-
 // --- off-canvas sidebar (below md/768px) ----------------------------------------------------
 // Toggled by the header hamburger and closed by tapping the backdrop or navigating (nav links do
 // a full page load, so no explicit close-on-navigate handler is needed). Global because
@@ -126,49 +120,4 @@ document.body.addEventListener("htmx:afterSwap", function () {
 document.addEventListener("click", function (evt) {
   var dialog = document.getElementById("preview-modal");
   if (dialog && evt.target === dialog) dialog.close();
-});
-
-// --- run detail collapse ----------------------------------------------------------------------
-// Purely visual: toggles the `hidden` class on the row's sibling .log-detail panel and flips
-// aria-expanded (which static/src/input.css uses to rotate the chevron). Never touches the SSE
-// swap target inside .log-detail (partials/graph_history.html), so it's safe to collapse a
-// still-streaming run's detail mid-stream — the list keeps receiving call-open/-delta frames
-// underneath, just not visibly.
-function toggleJobDetail(button) {
-  var expanded = button.getAttribute("aria-expanded") === "true";
-  button.setAttribute("aria-expanded", String(!expanded));
-  // The button (the whole row) and .log-detail are both direct children of
-  // job_status.html's outer job-{id} card.
-  var detail = button.parentElement.querySelector(".log-detail");
-  detail.classList.toggle("hidden", expanded);
-}
-
-// One merge call's row (partials/graph_call.html) — same pure-client-state pattern as
-// toggleJobDetail, one level down: flips aria-expanded on the row's own toggle button and the
-// `hidden` class on its sibling .call-detail panel. Safe to call while the row is still streaming
-// — the reasoning/output <pre> elements inside stay live SSE targets whether or not the panel
-// holding them is visible.
-function toggleCallDetail(button) {
-  var expanded = button.getAttribute("aria-expanded") === "true";
-  button.setAttribute("aria-expanded", String(!expanded));
-  var detail = button.parentElement.querySelector(".call-detail");
-  detail.classList.toggle("hidden", expanded);
-}
-
-// --- merge-run streaming --------------------------------------------------------------------
-// Live merge output arrives as server-sent events (api/sse.py) appended into per-call <pre>
-// elements. Keep each one pinned to the bottom as it grows, unless the reader has scrolled up to
-// look at something — matching how a terminal behaves.
-document.body.addEventListener("htmx:sseMessage", function (evt) {
-  var target = evt.target;
-  if (!target || !target.matches || !target.matches("[data-autoscroll]")) return;
-  var slack = target.scrollHeight - target.scrollTop - target.clientHeight;
-  if (slack < 40) target.scrollTop = target.scrollHeight;
-});
-
-// A finished run stops its own stream: the server sends `stream-close` as its last frame, and
-// leaving the EventSource open past that holds a connection open per finished job card.
-document.body.addEventListener("htmx:sseClose", function (evt) {
-  var container = evt.target;
-  if (container && container.removeAttribute) container.removeAttribute("sse-connect");
 });

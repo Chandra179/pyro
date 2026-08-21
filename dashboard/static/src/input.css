@@ -40,39 +40,6 @@
   }
 }
 
-/* The merge-history block is rendered for the whole life of a running job so the SSE container
-   exists before the first call arrives (see partials/job_status.html). Keep it out of the way
-   until it actually has a card in it. */
-.graph-history:has(> .graph-history-list:empty) {
-  display: none;
-}
-
-/* A toggle button's chevron (the merge-history toggle in partials/graph_history.html, and each
-   timeline row's own toggle in partials/graph_call.html) — collapsed state rotates it flat rather
-   than swapping icons, driven by the button's own aria-expanded so no JS is needed beyond the
-   class flip in static/js/app.js. Not scoped to a specific button class: both toggles share the
-   same open/closed convention (chevron points down when expanded, right when collapsed). */
-.chevron {
-  transition: transform 0.15s ease;
-}
-[aria-expanded="false"] .chevron {
-  transform: rotate(-90deg);
-}
-
-/* A streaming call's error slot exists before there is an error to put in it (see
-   partials/graph_call.html) — most calls never fill it. */
-.call-error:empty {
-  display: none;
-}
-
-/* A merge call's "reasoning" block is rendered up front while streaming (the element must exist
-   before its sse-swap target can receive anything), but most models emit no reasoning at all.
-   Hide it until its <pre> actually has content, so those calls don't show an empty block inside
-   the expanded detail panel. See dashboard/templates/partials/graph_call.html. */
-.call-reasoning:has(> pre:empty) {
-  display: none;
-}
-
 /* The graph view's diagram (dashboard/templates/partials/data_panel.html) renders via
    api/render.py's render_react_flow into this div, which static/js/app.js mounts into an
    interactive React Flow graph (dashboard/static/src/graph/GraphIsland.jsx). React Flow sizes

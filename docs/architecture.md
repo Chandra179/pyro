@@ -119,15 +119,12 @@ every diagram shows three arrows where there is one relationship. The model's or
 kept alongside the canonical form, so nothing the post actually said is lost.
 
 **Dashboard.** A web interface for triggering runs (hand it a blog URL or a single article URL)
-and watching them progress through each stage in real time, including — during the merge stage
-specifically — watching each post's name-resolution call stream in, not just a "still working"
-indicator. It also offers a browsing view over everything already extracted for a company, and a
-live diagram of the company's current graph, independent of any particular run.
-
-That streaming is a push, not a poll: the browser holds one open connection per running job and
-receives each piece of model output once, as it is produced. The alternative it replaced — asking
-the server for the merge transcript once a second — re-sent the entire transcript on every ask, so
-the cost of watching a run grew with the run's own length.
+and browsing everything already extracted for a company, plus a live diagram of the company's
+current graph, independent of any particular run. Submitting a run gets a one-shot acknowledgment,
+not a live view of it in progress — each stage transition and every merge call's streamed
+output/reasoning is written straight through to ArangoDB's `jobs` collection (db/jobs.py) as it
+happens, so a run's full transcript is a durable database record rather than something the
+dashboard has to keep a browser connection open to watch or lose if no one was looking.
 
 **Scheduling.** Since merging only processes posts that haven't been folded into the graph yet,
 it's cheap to re-run on a recurring schedule (e.g. every 15 minutes) rather than only ever being
@@ -152,15 +149,17 @@ Three concerns are kept deliberately separate rather than mixed into one setting
 
 Worth stating plainly rather than leaving implicit:
 
-- **Run history is durable now, but the dashboard is still single-instance.** Each job is written
-  through to ArangoDB's `jobs` collection (db/jobs.py) at coarse checkpoints — every pipeline-stage
-  transition, and every merge call as it finishes, not every streamed token — so the Runs page and
-  a run's merge-call transcript survive a restart instead of starting empty. A run that's still
-  in-flight when the process dies has no surviving thread to finish it, so `hydrate_jobs`
-  (api/jobs.py) rewrites it to "error" on the next startup rather than leaving it stuck on a stage
-  it will never leave. What this doesn't buy: the in-memory `JOBS` dict and the concurrency
-  semaphore that bounds active jobs are still process-local, so it still can't be scaled to more
-  than one dashboard instance — the first thing to revisit if that changes.
+- **Run history is durable, but there's no dashboard page over it, and it's still single-instance.**
+  Each job is written through to ArangoDB's `jobs` collection (db/jobs.py) at coarse checkpoints —
+  every pipeline-stage transition, and every merge call's output/reasoning as it finishes, not
+  every streamed token — but nothing in the dashboard renders that collection back; it's a durable
+  record for direct inspection (`pyro graph`, an AQL query, `mongosh`-style poking at the
+  collection), not something surfaced in the UI. A run that's still in-flight when the process dies
+  has no surviving thread to finish it, so `hydrate_jobs` (api/jobs.py) rewrites it to "error" on
+  the next startup rather than leaving it stuck on a stage it will never leave. What this doesn't
+  buy: the in-memory `JOBS` dict and the concurrency semaphore that bounds active jobs are still
+  process-local, so it still can't be scaled to more than one dashboard instance — the first thing
+  to revisit if that changes.
 - **Name resolution is a judgment call, not a guarantee.** Two posts describing the same system
   in genuinely different words (no shared proper noun, no obvious paraphrase) may end up as two
   separate nodes rather than one — the merge layer is deliberately conservative about this (a

@@ -52,11 +52,12 @@ def _clear_overrides():
     main.app.dependency_overrides.clear()
 
 
-def test_index_renders_no_runs():
+def test_index_renders_run_form():
     client = _client(_StubDb())
     resp = client.get("/")
     assert resp.status_code == 200
-    assert "No runs yet." in resp.text
+    assert 'hx-post="/jobs"' in resp.text
+    assert 'id="run-feedback"' in resp.text
 
 
 def test_data_page_shows_db_error_without_raising():
@@ -134,52 +135,33 @@ def test_data_shell_reachable_via_hx_select_target():
     assert 'id="data-shell"' in resp.text
 
 
-def test_graph_history_streams_while_merging_and_is_static_once_done():
-    """Two rendering modes off one template: a live run subscribes to the SSE stream, a finished
-    one just paints its history with no subscriptions to leak."""
-    from api.jobs import JOBS, GraphMergeCall, Job
+def test_job_submission_returns_confirmation_not_a_job_card(monkeypatch):
+    """Recent Runs was removed entirely — submitting a job now gets a one-shot acknowledgment
+    instead of a live-updating card, since progress/output live in ArangoDB, not the browser.
 
-    job = Job(
-        id="job-under-test",
-        company_name="Acme",
-        url="https://example.com",
-        limit=None,
-        extraction_variant="default",
-        status="merging",
-    )
-    call = GraphMergeCall(label="Post One", model="m")
-    call.content_parts.append("partial output")
-    job.graph_history.append(call)
-    JOBS[job.id] = job
-    try:
-        client = _client(_StubDb())
+    submit_job itself (api/jobs.py) opens a real database connection and starts a background
+    thread that scrapes the given URL — out of scope for this route test, so it's stubbed rather
+    than exercised, same as the database access other routes get via the DbDep override."""
+    from api.jobs import Job
 
-        live = client.get(f"/jobs/{job.id}/graph-history").text
-        assert 'sse-connect="/jobs/job-under-test/graph-events"' in live
-        assert 'sse-close="stream-close"' in live
+    def _fake_submit_job(company_name, url, limit, extraction_variant):
+        return Job(
+            id="job-1",
+            company_name=company_name,
+            url=url,
+            limit=limit,
+            extraction_variant=extraction_variant,
+        )
 
-        # The enclosing card renders the history outside the element that polls, so a poll can
-        # never re-process (and re-subscribe) the live subtree.
-        card = client.get(f"/jobs/{job.id}").text
-        assert 'hx-select="#job-job-under-test-summary"' in card
-        summary_start = card.index('id="job-job-under-test-summary"')
-        assert card.index("graph-history-job-under-test") > summary_start
-        assert "sse-connect" not in card[summary_start : card.index("graph-history-job-under-test")]
-
-        job.status = "done"
-        finished = client.get(f"/jobs/{job.id}/graph-history").text
-        assert "sse-connect" not in finished
-        assert "sse-swap" not in finished
-        assert "Post One" in finished
-        assert "partial output" in finished
-    finally:
-        JOBS.pop(job.id, None)
-
-
-def test_unknown_job_is_404():
+    monkeypatch.setattr(main, "submit_job", _fake_submit_job)
     client = _client(_StubDb())
-    assert client.get("/jobs/nope").status_code == 404
-    assert client.get("/jobs/nope/graph-history").status_code == 404
+    resp = client.post(
+        "/jobs",
+        data={"company_name": "Acme", "url": "https://example.com/sitemap.xml"},
+    )
+    assert resp.status_code == 200
+    assert "Started for" in resp.text
+    assert "Acme" in resp.text
 
 
 def test_static_assets_served():
@@ -187,7 +169,6 @@ def test_static_assets_served():
     for path in (
         "/static/css/app.css",
         "/static/js/htmx.min.js",
-        "/static/js/htmx-ext-sse.min.js",
         "/static/js/graph-island.bundle.js",
         "/static/css/react-flow.css",
         "/static/js/app.js",

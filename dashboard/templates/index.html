@@ -13,8 +13,8 @@
   </p>
   <form
     hx-post="/jobs"
-    hx-target="#recent-runs-list"
-    hx-swap="afterbegin"
+    hx-target="#run-feedback"
+    hx-swap="innerHTML"
     class="flex flex-col gap-6"
   >
     <div class="grid grid-cols-1 gap-4 sm:grid-cols-6">
@@ -43,28 +43,15 @@
       </label>
     </div>
 
-    <div>
+    <div class="flex items-center gap-3">
       <button
         type="submit"
         class="rounded-md bg-indigo-500 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-400"
       >
         Run pipeline
       </button>
+      <div id="run-feedback" class="flex-1 text-sm" aria-live="polite"></div>
     </div>
   </form>
-</section>
-
-<section class="mt-10">
-  <h2 class="mb-3 text-base font-medium">Recent runs</h2>
-  <div
-    id="recent-runs-list"
-    class="divide-y divide-slate-100 overflow-hidden rounded-lg border border-slate-200 bg-white dark:divide-slate-800 dark:border-slate-800 dark:bg-slate-900/60"
-  >
-    {% for job in jobs %}
-      {% include "partials/job_status.html" %}
-    {% else %}
-      <p id="no-runs-placeholder" class="px-4 py-3 text-sm text-slate-500 dark:text-slate-500">No runs yet.</p>
-    {% endfor %}
-  </div>
 </section>
 {% endblock %}

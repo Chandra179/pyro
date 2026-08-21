@@ -1,7 +1,6 @@
 // Flat config (ESLint 9+). Covers static/js/app.js (plain browser script) and
 // static/src/graph/*.jsx (the React Flow island's source, bundled by `npm run build:js` —
-// htmx.min.js, htmx-ext-sse.min.js, and the built graph-island.bundle.js itself are vendored,
-// not linted).
+// htmx.min.js and the built graph-island.bundle.js itself are vendored, not linted).
 import js from "@eslint/js";
 import react from "eslint-plugin-react";
 
