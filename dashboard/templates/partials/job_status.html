@@ -20,8 +20,8 @@
 {#
   One run, rendered as a single compact log row: a status dot, name, a status/progress line that
   swaps for the source URL once the run finishes, a live outcome stat, and a relative timestamp —
-  everything worth seeing without expanding. Clicking anywhere on the row reveals the rest (full
-  URL, template, the merge-call timeline) below. No visible toggle affordance on the row itself
+  everything worth seeing without expanding. Clicking anywhere on the row reveals the rest (the
+  merge-call timeline) below. No visible toggle affordance on the row itself
   (unlike a merge call's own row, partials/graph_call.html's .call-toggle, which has its own
   "details" hint) — an expanded row already shows one of those per call underneath, and a second
   "details" hint at the row level next to it read as two of the same control.
@@ -68,6 +68,8 @@
             {{ job.url }}
           {% elif job.status == "scraping" and job.scraped_count is not none %}
             {{ job.scraped_count }}/{{ job.discovered_count }} scraped
+          {% elif job.status == "merging" %}
+            merging · {{ job.graph_history | length }} call{{ "s" if job.graph_history | length != 1 else "" }}
           {% else %}
             {{ job.status_label }}
           {% endif %}
@@ -83,6 +85,21 @@
         </span>
         <span class="shrink-0 text-[11px] text-slate-400 dark:text-slate-600">{{ job.created_at | timeago }}</span>
       </div>
+      {% if not job.is_finished %}
+      {#
+        Purely qualitative — done/current/pending per pipeline stage — derived from job.status
+        alone, so it needs no new progress-tracking wiring: _clean_impl/_extract_impl don't report
+        per-article counts back to the job (only scrape and merge do, via scraped_count and
+        graph_history respectively), so a numeric fraction per segment isn't available yet.
+      #}
+      <div class="grid grid-cols-4 gap-0.5 pl-5" aria-hidden="true">
+        {% set stage_order = ["scraping", "cleaning", "extracting", "merging"] %}
+        {% set current_idx = stage_order.index(job.status) if job.status in stage_order else -1 %}
+        {% for stage in stage_order %}
+        <span class="h-1 rounded-full {{ "bg-emerald-400" if loop.index0 < current_idx else ("bg-indigo-400 animate-pulse" if loop.index0 == current_idx else "bg-slate-200 dark:bg-slate-700") }}"></span>
+        {% endfor %}
+      </div>
+      {% endif %}
       {% if job.error %}
       <p class="pl-5 text-xs text-rose-500 dark:text-rose-400">{{ job.error }}</p>
       {% endif %}
@@ -90,24 +107,8 @@
   </button>
 
   <div class="log-detail {{ "hidden" if job.is_finished else "" }} border-t border-slate-100 px-4 py-3 dark:border-slate-800">
-    <div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500 dark:text-slate-400">
-      <span class="truncate">
-        {{ job.url }}
-        {% if job.source_kind %}
-        <span class="ml-1 rounded bg-slate-100 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-slate-500 dark:bg-slate-800 dark:text-slate-400">
-          {{ job.source_kind }}
-        </span>
-        {% endif %}
-      </span>
-      <span class="text-slate-400 dark:text-slate-600">template: {{ job.extraction_variant }}</span>
-      {% if job.is_finished and job.scraped_count is not none %}
-      <span>{{ job.discovered_count }} discovered · {{ job.scraped_count }} newly scraped</span>
-      {% endif %}
-    </div>
     {% if not job.is_finished or job.graph_history %}
-    <div class="mt-2">
-      {% include "partials/graph_history.html" %}
-    </div>
+    {% include "partials/graph_history.html" %}
     {% endif %}
   </div>
 </div>
