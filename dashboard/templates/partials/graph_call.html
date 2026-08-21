@@ -1,35 +1,22 @@
 {#
   One merge LLM call (one per article processed during the merge stage), rendered as a single row
-  on the run's vertical activity timeline. Rendered in two situations:
+  in the run's merge-call list. Rendered in two situations:
 
   - by the SSE stream as the `call-open` frame, when a call starts. `index` is set, and the
     elements below subscribe to that call's own delta events so streamed output is appended
     (hx-swap="beforeend") rather than the whole row being re-sent.
   - by partials/graph_history.html for a finished run, with `index` unset — no subscriptions, the
     content is simply already there.
-
-  The rail: every row gets a `before:` pseudo-element line running from just below its own dot to
-  its own bottom edge — stacked rows read as one continuous line down the list, and `last:` turns
-  it off so the rail doesn't overshoot the final row. The dot itself reacts to the status block's
-  data-state attribute (graph_call_status.html) via the :has() rule in static/src/input.css rather
-  than a class computed here — a streaming call doesn't know its outcome until its call-close-{i}
-  frame lands well after this row was first painted, and the row's outer element is never
-  re-swapped to pick up a class change.
 #}
 {% set streaming = index is not none %}
-<div
-  class="call relative border-b border-slate-100 py-3 pl-6 last:border-b-0 before:absolute before:bottom-[-1px] before:left-[3px] before:top-[22px] before:w-px before:bg-slate-200 before:content-[''] last:before:hidden dark:border-slate-800 dark:before:bg-slate-800"
->
-  <span
-    class="call-dot absolute left-0 top-[17px] h-2 w-2 rounded-full bg-slate-300 ring-4 ring-white dark:bg-slate-600 dark:ring-slate-900"
-    aria-hidden="true"
-  ></span>
-
+<div class="call border-b border-slate-100 py-3 last:border-b-0 dark:border-slate-800">
   {#
     The whole row expands/collapses as one unit (reasoning + output together) via a single
     button, rather than the two independent <details> the pre-redesign version used — matching
     the activity-timeline mockup's one-click-per-row model. toggleCallDetail (static/js/app.js)
-    flips this button's aria-expanded and the sibling .call-detail panel's `hidden` class.
+    flips this button's aria-expanded and the sibling .call-detail panel's `hidden` class. No
+    visible toggle affordance on the row itself — same click-anywhere-no-hint convention as the
+    run row above it (partials/job_status.html).
   #}
   <button
     type="button"
@@ -38,12 +25,6 @@
     onclick="toggleCallDetail(this)"
   >
     <span class="truncate text-sm font-medium">{{ call.label }}</span>
-    <span class="flex shrink-0 items-center gap-1 text-[11px] text-slate-400 dark:text-slate-600">
-      details
-      <svg class="chevron h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
-        <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
-      </svg>
-    </span>
   </button>
 
   {#

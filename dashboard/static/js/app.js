@@ -137,10 +137,9 @@ document.addEventListener("click", function (evt) {
 function toggleJobDetail(button) {
   var expanded = button.getAttribute("aria-expanded") === "true";
   button.setAttribute("aria-expanded", String(!expanded));
-  // The chevron button and .log-detail are both direct children of button.parentElement
-  // (job_status.html's outer job-{id} card), siblings of each other one level up from the row
-  // the button itself sits in.
-  var detail = button.parentElement.parentElement.querySelector(".log-detail");
+  // The button (the whole row) and .log-detail are both direct children of
+  // job_status.html's outer job-{id} card.
+  var detail = button.parentElement.querySelector(".log-detail");
   detail.classList.toggle("hidden", expanded);
 }
 

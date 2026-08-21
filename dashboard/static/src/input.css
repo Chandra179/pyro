@@ -59,36 +59,6 @@
   transform: rotate(-90deg);
 }
 
-/* A merge call's timeline-rail dot (partials/graph_call.html) reflects the outcome carried by its
-   status block's data-state attribute (partials/graph_call_status.html) — driven by :has() rather
-   than a class computed here, because a streaming call doesn't know its outcome until its
-   call-close-{i} frame lands well after the row was first painted, and the row's outer element is
-   never re-swapped to pick up a class change. */
-@keyframes call-dot-pulse {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.4;
-  }
-}
-.call:has([data-state="streaming"]) .call-dot {
-  background-color: var(--color-indigo-400);
-  animation: call-dot-pulse 1.4s ease-in-out infinite;
-}
-.call:has([data-state="done"]) .call-dot {
-  background-color: var(--color-emerald-400);
-}
-.call:has([data-state="error"]) .call-dot {
-  background-color: var(--color-rose-400);
-}
-@media (prefers-reduced-motion: reduce) {
-  .call:has([data-state="streaming"]) .call-dot {
-    animation: none;
-  }
-}
-
 /* A streaming call's error slot exists before there is an error to put in it (see
    partials/graph_call.html) — most calls never fill it. */
 .call-error:empty {
