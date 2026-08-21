@@ -1,4 +1,3 @@
-{% from "partials/_macros.html" import badge %}
 {#
   Deletes the "No runs yet." placeholder (index.html) the first time a job card lands in
   #recent-runs-list via hx-swap-oob — a no-op once it's already gone, including on every
@@ -6,83 +5,111 @@
   id is still in the DOM.
 #}
 <div id="no-runs-placeholder" hx-swap-oob="delete"></div>
-{% set status_variants = {
-  "pending": "neutral",
-  "scraping": "accent",
-  "cleaning": "accent",
-  "extracting": "accent",
-  "merging": "accent",
-  "done": "neutral",
-  "error": "rose",
+{% set dot_classes = {
+  "pending": "bg-slate-300 dark:bg-slate-600",
+  "scraping": "bg-indigo-400 animate-pulse",
+  "cleaning": "bg-indigo-400 animate-pulse",
+  "extracting": "bg-indigo-400 animate-pulse",
+  "merging": "bg-indigo-400 animate-pulse",
+  "done": "bg-emerald-400",
+  "error": "bg-rose-400",
 } %}
+{% set failed = job.graph_history | selectattr("error") | list | length %}
+{% set new_sum = job.graph_history | rejectattr("new_entities", "none") | sum(attribute="new_entities") %}
+{% set rel_sum = job.graph_history | rejectattr("relationships_count", "none") | sum(attribute="relationships_count") %}
 {#
-  The card itself is rendered once and never swapped again. Only the summary block below polls,
-  replacing itself via hx-select — deliberately, so the poll never touches the merge-history
-  subtree underneath it.
+  One run, rendered as a single compact log row: a status dot, name, a status/progress line that
+  swaps for the source URL once the run finishes, a live outcome stat, and a relative timestamp —
+  everything worth seeing without expanding. The chevron reveals the rest (full URL, template,
+  the merge-call timeline) below.
 
-  It used to be the whole card that polled (hx-swap="outerHTML" every 2s). Once merge output
-  started streaming over SSE that became a correctness problem, not just wasted bytes: each swap
-  re-processed the history subtree, and the SSE extension's registerSSE() attaches an
-  `addEventListener` per `sse-swap` element with no guard against re-registration. Two seconds in,
-  every delta was being appended twice; four seconds in, three times. hx-preserve kept the node
-  alive but did not stop it being re-processed. Not swapping it at all is what actually fixes it.
+  The whole row used to be one polled block (this comment used to live where #job-{id}-summary
+  starts). It's now split three ways:
+  - #job-{id}-summary: re-fetched every 2s while running — the one-line row plus the error
+    message, i.e. everything that can change *before* the merge stage's own SSE stream takes
+    over. Kept out of the detail panel below on purpose: an error only appears the moment the job
+    finishes (the same poll that flips job.is_finished), so it has to be inside the last thing
+    that poll actually swaps, not in a sibling that stopped updating earlier.
+  - the chevron button: a permanent sibling of the summary, never re-swapped, so its
+    aria-expanded survives every 2s poll.
+  - .log-detail: also never re-swapped, for the same reason graph_history.html's SSE container
+    can't be either (see that partial) — it just happens to sit right next to it here.
+
+  This is a direct child of #recent-runs-list (index.html), which supplies the shared border and
+  the divide-y rule between rows — this element carries no border/background of its own so a
+  freshly afterbegin-inserted job reads as one more row in the same list, not a new box.
 #}
-<div
-  id="job-{{ job.id }}"
-  class="rounded-lg border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900/60"
->
-  <div
-    id="job-{{ job.id }}-summary"
-    {% if not job.is_finished %}
-    hx-get="/jobs/{{ job.id }}"
-    hx-trigger="every 2s"
-    hx-select="#job-{{ job.id }}-summary"
-    hx-swap="outerHTML"
-    {% endif %}
-  >
-    <div class="flex flex-wrap items-center justify-between gap-3 p-4">
+<div id="job-{{ job.id }}" class="bg-white dark:bg-slate-900/60">
+  <div class="flex items-start gap-2 px-4 py-2.5">
+    <div
+      id="job-{{ job.id }}-summary"
+      class="flex min-w-0 flex-1 flex-col gap-1"
+      {% if not job.is_finished %}
+      hx-get="/jobs/{{ job.id }}"
+      hx-trigger="every 2s"
+      hx-select="#job-{{ job.id }}-summary"
+      hx-swap="outerHTML"
+      {% endif %}
+    >
       <div class="flex min-w-0 items-center gap-3">
-        <div class="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-slate-200 bg-slate-50 text-xs font-semibold text-slate-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400">
-          {{ job.company_name[:2] | upper }}
-        </div>
-        <div class="min-w-0">
-          <p class="truncate font-medium">{{ job.company_name }}</p>
-          <p class="truncate text-xs text-slate-500 dark:text-slate-500">
+        <span class="h-2 w-2 shrink-0 rounded-full ring-4 ring-white dark:ring-slate-900 {{ dot_classes[job.status] }}" aria-hidden="true"></span>
+        <span class="shrink-0 truncate font-display text-sm font-semibold">{{ job.company_name }}</span>
+        <span class="min-w-0 flex-1 truncate text-xs text-slate-400 dark:text-slate-500">
+          {% if job.status == "done" %}
             {{ job.url }}
-            {% if job.source_kind %}
-            <span class="ml-1 rounded bg-slate-100 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-slate-500 dark:bg-slate-800 dark:text-slate-400">
-              {{ job.source_kind }}
-            </span>
-            {% endif %}
-          </p>
-        </div>
+          {% elif job.status == "scraping" and job.scraped_count is not none %}
+            {{ job.scraped_count }}/{{ job.discovered_count }} scraped
+          {% else %}
+            {{ job.status_label }}
+          {% endif %}
+        </span>
+        <span class="shrink-0 whitespace-nowrap text-xs text-slate-500 dark:text-slate-400">
+          {%- if job.status == "error" -%}
+            {% if failed %}<span class="text-rose-500 dark:text-rose-400">{{ failed }} unresolved</span>{% endif %}
+          {%- elif new_sum or rel_sum -%}
+            {% if new_sum %}<span class="font-medium text-emerald-600 dark:text-emerald-400">+{{ new_sum }} new</span>{% endif %}{% if new_sum and rel_sum %} · {% endif %}{% if rel_sum %}{{ rel_sum }} rel{% endif %}
+          {%- elif job.is_finished and job.scraped_count is not none -%}
+            {{ job.scraped_count }} article{{ "s" if job.scraped_count != 1 else "" }}
+          {%- endif -%}
+        </span>
+        <span class="shrink-0 text-[11px] text-slate-400 dark:text-slate-600">{{ job.created_at | timeago }}</span>
       </div>
-      <div class="flex shrink-0 items-center gap-2.5">
-        <span class="text-[11px] text-slate-400 dark:text-slate-600">{{ job.created_at | timeago }}</span>
-        {{ badge(job.status_label, status_variants[job.status], pulse=not job.is_finished) }}
-      </div>
-    </div>
-    <div class="px-4 pb-4">
-      <p class="text-[10px] uppercase tracking-wide text-slate-400 dark:text-slate-600">
-        extraction template: {{ job.extraction_variant }}
-      </p>
-      {% if job.scraped_count is not none %}
-      <p class="mt-1.5 text-xs text-slate-500 dark:text-slate-500">
-        {{ job.discovered_count }} discovered · {{ job.scraped_count }} newly scraped
-      </p>
-      {% endif %}
       {% if job.error %}
-      <p class="mt-1.5 text-xs text-rose-500 dark:text-rose-400">{{ job.error }}</p>
+      <p class="pl-5 text-xs text-rose-500 dark:text-rose-400">{{ job.error }}</p>
       {% endif %}
     </div>
+    <button
+      type="button"
+      class="log-toggle shrink-0 rounded p-1 text-slate-400 hover:text-slate-600 dark:text-slate-600 dark:hover:text-slate-300"
+      aria-expanded="{{ "false" if job.is_finished else "true" }}"
+      onclick="toggleJobDetail(this)"
+      aria-label="Toggle run details"
+    >
+      <svg class="chevron h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
+      </svg>
+    </button>
   </div>
-  {#
-    Rendered for the whole life of a running job, not just once merging starts — the container has
-    to exist before the first call in order to receive it, and since the card no longer re-renders
-    there is no later swap that could introduce it. Empty until the merge stage produces output
-    (hidden by CSS until then).
-  #}
-  {% if not job.is_finished or job.graph_history %}
-  {% include "partials/graph_history.html" %}
-  {% endif %}
+
+  <div class="log-detail {{ "hidden" if job.is_finished else "" }} border-t border-slate-100 px-4 py-3 dark:border-slate-800">
+    <div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500 dark:text-slate-400">
+      <span class="truncate">
+        {{ job.url }}
+        {% if job.source_kind %}
+        <span class="ml-1 rounded bg-slate-100 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-slate-500 dark:bg-slate-800 dark:text-slate-400">
+          {{ job.source_kind }}
+        </span>
+        {% endif %}
+      </span>
+      <span class="text-slate-400 dark:text-slate-600">template: {{ job.extraction_variant }}</span>
+      {% if job.is_finished and job.scraped_count is not none %}
+      <span>{{ job.discovered_count }} discovered · {{ job.scraped_count }} newly scraped</span>
+      {% endif %}
+    </div>
+    {% if not job.is_finished or job.graph_history %}
+    <div class="mt-2">
+      {% include "partials/graph_history.html" %}
+    </div>
+    {% endif %}
+  </div>
 </div>

@@ -39,7 +39,15 @@ def _freeze(call: GraphMergeCall) -> SimpleNamespace:
     """An immutable point-in-time copy of a call, for rendering. `content`/`reasoning` are
     properties over lists the job thread appends to, so reading one twice can return two different
     strings; a frozen copy makes "what the card was painted with" and "how much has been sent"
-    provably the same value."""
+    provably the same value.
+
+    The four summary fields are always None here — this only ever runs for the `call-open` frame,
+    before report_summary has had a chance to run — but they still have to be set explicitly:
+    leaving them off the namespace makes `call.new_entities` resolve to Jinja's Undefined rather
+    than None in the template, and `Undefined is not none` is True, so the card would render as if
+    a summary existed with every field blank instead of falling back to "streaming". The `call-close`
+    frame renders straight from the live `call` object (not this copy), where they're real by then.
+    """
     return SimpleNamespace(
         label=call.label,
         model=call.model,
@@ -47,6 +55,10 @@ def _freeze(call: GraphMergeCall) -> SimpleNamespace:
         error=call.error,
         content=call.content,
         reasoning=call.reasoning,
+        new_entities=None,
+        matched_entities=None,
+        relationships_count=None,
+        llm_resolved_count=None,
     )
 
 

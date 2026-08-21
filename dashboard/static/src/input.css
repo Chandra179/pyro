@@ -47,22 +47,46 @@
   display: none;
 }
 
-/* The merge-history toggle's chevron (partials/graph_history.html) — collapsed state rotates it
-   flat rather than swapping icons, driven by the button's own aria-expanded so no JS is needed
-   beyond the class flip in static/js/app.js. */
+/* A toggle button's chevron (the merge-history toggle in partials/graph_history.html, and each
+   timeline row's own toggle in partials/graph_call.html) — collapsed state rotates it flat rather
+   than swapping icons, driven by the button's own aria-expanded so no JS is needed beyond the
+   class flip in static/js/app.js. Not scoped to a specific button class: both toggles share the
+   same open/closed convention (chevron points down when expanded, right when collapsed). */
 .chevron {
   transition: transform 0.15s ease;
 }
-.history-toggle[aria-expanded="false"] .chevron {
+[aria-expanded="false"] .chevron {
   transform: rotate(-90deg);
 }
 
-/* A merge call's left border only turns rose once its error slot has content — driven by :has()
-   rather than a server-computed class, because a streaming call doesn't know it failed until its
-   call-error-{i} frame lands well after the card was first painted, and the card's outer element
-   is never re-swapped to pick up a class change (see partials/graph_call.html). */
-.call:has(.call-error:not(:empty)) {
-  border-left-color: var(--color-rose-400);
+/* A merge call's timeline-rail dot (partials/graph_call.html) reflects the outcome carried by its
+   status block's data-state attribute (partials/graph_call_status.html) — driven by :has() rather
+   than a class computed here, because a streaming call doesn't know its outcome until its
+   call-close-{i} frame lands well after the row was first painted, and the row's outer element is
+   never re-swapped to pick up a class change. */
+@keyframes call-dot-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
+}
+.call:has([data-state="streaming"]) .call-dot {
+  background-color: var(--color-indigo-400);
+  animation: call-dot-pulse 1.4s ease-in-out infinite;
+}
+.call:has([data-state="done"]) .call-dot {
+  background-color: var(--color-emerald-400);
+}
+.call:has([data-state="error"]) .call-dot {
+  background-color: var(--color-rose-400);
+}
+@media (prefers-reduced-motion: reduce) {
+  .call:has([data-state="streaming"]) .call-dot {
+    animation: none;
+  }
 }
 
 /* A streaming call's error slot exists before there is an error to put in it (see
@@ -71,11 +95,11 @@
   display: none;
 }
 
-/* A merge call's "thinking" disclosure is rendered up front while streaming (the element must
-   exist before its sse-swap target can receive anything), but most models emit no reasoning at
-   all. Hide it until its <pre> actually has content, so those calls don't show an empty
-   disclosure. See dashboard/templates/partials/graph_call.html. */
-details:has(> pre:empty) {
+/* A merge call's "reasoning" block is rendered up front while streaming (the element must exist
+   before its sse-swap target can receive anything), but most models emit no reasoning at all.
+   Hide it until its <pre> actually has content, so those calls don't show an empty block inside
+   the expanded detail panel. See dashboard/templates/partials/graph_call.html. */
+.call-reasoning:has(> pre:empty) {
   display: none;
 }
 

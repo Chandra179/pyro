@@ -9,10 +9,11 @@
  * Loaded with `defer`, so the DOM is parsed before any of this runs.
  */
 
-/* exported toggleMergeHistory */
-// toggleMergeHistory is called from an inline onclick= in
-// dashboard/templates/partials/graph_history.html, invisible to a linter reading this file in
-// isolation — the directive above tells no-unused-vars it has a real caller.
+/* exported toggleJobDetail, toggleCallDetail */
+// toggleJobDetail and toggleCallDetail are called from inline onclick= attributes in
+// dashboard/templates/partials/job_status.html and graph_call.html respectively, invisible to
+// a linter reading this file in isolation — the directive above tells no-unused-vars they have
+// real callers.
 
 // --- off-canvas sidebar (below md/768px) ----------------------------------------------------
 // Toggled by the header hamburger and closed by tapping the backdrop or navigating (nav links do
@@ -127,16 +128,32 @@ document.addEventListener("click", function (evt) {
   if (dialog && evt.target === dialog) dialog.close();
 });
 
-// --- merge history collapse ------------------------------------------------------------------
-// Purely visual: toggles the `hidden` class on the sibling .graph-history-list and flips
+// --- run detail collapse ----------------------------------------------------------------------
+// Purely visual: toggles the `hidden` class on the row's sibling .log-detail panel and flips
 // aria-expanded (which static/src/input.css uses to rotate the chevron). Never touches the SSE
-// swap target itself, so it's safe to collapse a still-streaming run's history mid-stream — the
-// list keeps receiving call-open/-delta frames underneath, just not visibly.
-function toggleMergeHistory(button) {
+// swap target inside .log-detail (partials/graph_history.html), so it's safe to collapse a
+// still-streaming run's detail mid-stream — the list keeps receiving call-open/-delta frames
+// underneath, just not visibly.
+function toggleJobDetail(button) {
   var expanded = button.getAttribute("aria-expanded") === "true";
   button.setAttribute("aria-expanded", String(!expanded));
-  var list = button.nextElementSibling;
-  list.classList.toggle("hidden", expanded);
+  // The chevron button and .log-detail are both direct children of button.parentElement
+  // (job_status.html's outer job-{id} card), siblings of each other one level up from the row
+  // the button itself sits in.
+  var detail = button.parentElement.parentElement.querySelector(".log-detail");
+  detail.classList.toggle("hidden", expanded);
+}
+
+// One merge call's row (partials/graph_call.html) — same pure-client-state pattern as
+// toggleJobDetail, one level down: flips aria-expanded on the row's own toggle button and the
+// `hidden` class on its sibling .call-detail panel. Safe to call while the row is still streaming
+// — the reasoning/output <pre> elements inside stay live SSE targets whether or not the panel
+// holding them is visible.
+function toggleCallDetail(button) {
+  var expanded = button.getAttribute("aria-expanded") === "true";
+  button.setAttribute("aria-expanded", String(!expanded));
+  var detail = button.parentElement.querySelector(".call-detail");
+  detail.classList.toggle("hidden", expanded);
 }
 
 // --- merge-run streaming --------------------------------------------------------------------

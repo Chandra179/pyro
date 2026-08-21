@@ -68,6 +68,13 @@ class GraphMergeCall:
     error: str | None = None
     content_parts: list[str] = field(default_factory=list)
     reasoning_parts: list[str] = field(default_factory=list)
+    # Populated by report_summary once entities/relationships are actually upserted — None until
+    # then (including for the whole life of a call that errors before reaching that point), so
+    # templates can tell "no summary yet" apart from "summary is zero".
+    new_entities: int | None = None
+    matched_entities: int | None = None
+    relationships_count: int | None = None
+    llm_resolved_count: int | None = None
 
     @property
     def content(self) -> str:
@@ -89,6 +96,10 @@ class GraphMergeCall:
             "error": self.error,
             "content": self.content,
             "reasoning": self.reasoning,
+            "new_entities": self.new_entities,
+            "matched_entities": self.matched_entities,
+            "relationships_count": self.relationships_count,
+            "llm_resolved_count": self.llm_resolved_count,
         }
 
     @classmethod
@@ -98,6 +109,10 @@ class GraphMergeCall:
             model=doc.get("model", ""),
             done=doc.get("done", False),
             error=doc.get("error"),
+            new_entities=doc.get("new_entities"),
+            matched_entities=doc.get("matched_entities"),
+            relationships_count=doc.get("relationships_count"),
+            llm_resolved_count=doc.get("llm_resolved_count"),
         )
         if doc.get("content"):
             call.content_parts.append(doc["content"])
@@ -126,6 +141,19 @@ class JobGraphReporter(GraphReporter):
         call = self.job.graph_history[-1]
         call.content_parts.append(content)
         call.reasoning_parts.append(reasoning)
+
+    def report_summary(
+        self,
+        new_entities: int,
+        matched_entities: int,
+        relationships_count: int,
+        llm_resolved_count: int,
+    ) -> None:
+        call = self.job.graph_history[-1]
+        call.new_entities = new_entities
+        call.matched_entities = matched_entities
+        call.relationships_count = relationships_count
+        call.llm_resolved_count = llm_resolved_count
 
     def end_call(self, error: str | None = None) -> None:
         call = self.job.graph_history[-1]

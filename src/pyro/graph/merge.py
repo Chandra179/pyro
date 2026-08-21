@@ -60,6 +60,18 @@ class GraphReporter:
     def on_chunk(self, content: str, reasoning: str) -> None:
         pass
 
+    def report_summary(
+        self,
+        new_entities: int,
+        matched_entities: int,
+        relationships_count: int,
+        llm_resolved_count: int,
+    ) -> None:
+        """What the current call's article actually did to the graph. Reported once, after
+        entities/relationships are upserted — deliberately *before* `end_call`, so a subclass
+        that flips a "done" UI state on `end_call` never observes a call marked done with no
+        summary attached yet."""
+
     def end_call(self, error: str | None = None) -> None:
         pass
 
@@ -130,7 +142,9 @@ async def _resolve_names(
     except Exception as exc:
         ctx.reporter.end_call(error=str(exc))
         raise
-    ctx.reporter.end_call()
+    # Not `ctx.reporter.end_call()` here: the call's real work (resolving names) is done, but
+    # `_merge_article` still has to upsert entities/relationships and report a summary before this
+    # call should read as finished — see report_summary's docstring.
 
     try:
         parsed = ResolutionResponse.model_validate(
@@ -166,6 +180,11 @@ async def _merge_article(
         [e["name"] for e in entities],
         threshold=ctx.settings.graph_fuzzy_threshold,
     )
+    # A call card only exists in the dashboard's merge history when a call actually happened —
+    # an article that resolves entirely deterministically stays invisible there, same as before
+    # this call ever reported a summary. `had_call` gates report_summary/end_call below so that
+    # stays true.
+    had_call = bool(unresolved)
     if unresolved:
         llm_mapping = await _resolve_names(
             unresolved,
@@ -186,10 +205,23 @@ async def _merge_article(
             article.id,
         )
 
+    # Snapshot before upserting so "new" means new-to-the-graph-as-of-this-article, not
+    # new-to-this-entity-loop — a name introduced earlier in this same article's entity list
+    # still only counts once.
+    known_before = set(known.names)
+    new_count = 0
+    matched_count = 0
+    llm_resolved_count = sum(1 for r in mapping.values() if r.method == "llm")
+
     for entity in entities:
         name = entity["name"]
         resolved = mapping.get(name)
         canonical_name = resolved.canonical if resolved else name
+        if canonical_name in known_before:
+            matched_count += 1
+        else:
+            new_count += 1
+            known_before.add(canonical_name)
         db.upsert_entity(
             ctx.company_name,
             canonical_name,
@@ -234,6 +266,15 @@ async def _merge_article(
                 at=rel.get("as_of") or now_iso(),
                 exclude_relation="replaced_by",
             )
+
+    if had_call:
+        ctx.reporter.report_summary(
+            new_entities=new_count,
+            matched_entities=matched_count,
+            relationships_count=len(relationships),
+            llm_resolved_count=llm_resolved_count,
+        )
+        ctx.reporter.end_call()
 
     db.mark_graph_merged(article.id)
 

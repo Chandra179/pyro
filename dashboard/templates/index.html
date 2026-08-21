@@ -56,11 +56,14 @@
 
 <section class="mt-10">
   <h2 class="mb-3 text-base font-medium">Recent runs</h2>
-  <div id="recent-runs-list" class="flex flex-col gap-3">
+  <div
+    id="recent-runs-list"
+    class="divide-y divide-slate-100 overflow-hidden rounded-lg border border-slate-200 bg-white dark:divide-slate-800 dark:border-slate-800 dark:bg-slate-900/60"
+  >
     {% for job in jobs %}
       {% include "partials/job_status.html" %}
     {% else %}
-      <p id="no-runs-placeholder" class="text-sm text-slate-500 dark:text-slate-500">No runs yet.</p>
+      <p id="no-runs-placeholder" class="px-4 py-3 text-sm text-slate-500 dark:text-slate-500">No runs yet.</p>
     {% endfor %}
   </div>
 </section>
