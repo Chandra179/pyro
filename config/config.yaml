@@ -51,3 +51,10 @@ graph_model: "deepseek/deepseek-v4-flash-0731"
 
 router:
   timeout: 9000
+  # OpenCode Zen's free tier (opencode_free_models) is currently rate-limited on this account,
+  # and each stuck tier eats up to rate_limit_max_retries * rate_limit_wait_seconds before the
+  # cascade advances — emptying this list here skips straight past it to OpenCode Go instead of
+  # stalling for minutes on a dead tier.
+  opencode_free_models: []
+  # Bypasses litellm entirely for OpenCode Go (see router/opencode_go.py's docstring for why).
+  opencode_go_enabled: true

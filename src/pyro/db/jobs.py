@@ -24,9 +24,6 @@ class JobRepository:
         else:
             self._col.insert(doc)
 
-    def get(self, job_id: str) -> dict | None:
-        return self._col.get(job_id)
-
     def list_recent(self, limit: int) -> list[dict]:
         query = """
         FOR doc IN @@col

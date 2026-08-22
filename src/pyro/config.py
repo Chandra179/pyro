@@ -19,6 +19,10 @@ class RouterConfig(BaseModel):
     num_retries: int = 2
     cooldown_time: int = 30
     allowed_fails: int = 1
+    # Random pick among same-tier deployments each call — see router/cascade.py's build_router.
+    routing_strategy: str = "simple-shuffle"
+    # Retries for a 200 OK with malformed JSON — Router only reacts to raised exceptions.
+    cascade_parse_retry_attempts: int = 3
     # Cap so a hung/slow model raises instead of blocking forever — only raised exceptions
     # advance the cascade, so a stall would otherwise never trigger fallback.
     timeout: float = 60.0
@@ -26,16 +30,18 @@ class RouterConfig(BaseModel):
     # TokenRouter (api.tokenrouter.com): OpenAI-compatible proxy, model IDs are its own aliases.
     tokenrouter_model: str = "deepseek/deepseek-v4-flash-0731"
     tokenrouter_api_base: str = "https://api.tokenrouter.com/v1"
-    # TokenRouter's rotating time-boxed "-free" promos, not a stable free tier.
-    tokenrouter_free_models: list[str] = [
-        "qwen/qwen3.8-max-free",
-    ]
     # OpenCode Zen (opencode.ai): another OpenAI-compatible passthrough, same shape as above.
     opencode_api_base: str = "https://opencode.ai/zen/v1"
     opencode_free_models: list[str] = [
         "big-pickle",
         "deepseek-v4-flash-free",
     ]
+    # OpenCode Go: same account credential as Zen (`opencode_api_key`), separate paid tier.
+    # Called directly via router/opencode_go.py, not through litellm — litellm misclassified its
+    # errors as RateLimitError. Opt-in; set opencode_go_enabled: true in config.yaml to use it.
+    opencode_go_enabled: bool = False
+    opencode_go_api_base: str = "https://opencode.ai/zen/go/v1"
+    opencode_go_model: str = "deepseek-v4-flash"
     openrouter_free_models: list[str] = [
         "openrouter/openai/gpt-oss-20b:free",
         "openrouter/nvidia/nemotron-3-super-120b-a12b:free",
@@ -165,10 +171,8 @@ class Settings(BaseSettings):
     # Kept low enough to stay under a free tier's typical ~20 RPM ceiling given real call latency.
     extraction_concurrency: int = 5
 
-    # Cap on concurrently running dashboard pipeline jobs across all companies — each does
-    # Playwright scraping (CPU/memory heavy) and shares the same LLM cascade, so uncapped
-    # bulk-submission would have them all contend at once. A job beyond this cap waits
-    # ("pending") rather than running; see api/jobs.py's `_JOB_SLOTS`.
+    # Cap on concurrent dashboard jobs (Playwright scraping is heavy, cascade is shared); jobs
+    # beyond this wait as "pending" — see api/jobs.py's `_JOB_SLOTS`.
     max_concurrent_jobs: int = 3
 
     # Oldest finished jobs are dropped past this cap, from both the in-memory store and ArangoDB.
@@ -201,7 +205,7 @@ class Settings(BaseSettings):
     graph_candidate_names_limit: int | None = 40
 
     # Companies processed at once by merge-graph-pending; each company's own merge is still
-    # serialized by cli.py's _MERGE_LOCKS.
+    # serialized by graph/merge.py's cross-process lock (db/merge_locks.py).
     merge_pending_concurrency: int = 3
 
     # Fixed taxonomy tagged on extracted entities/relationships; kept for a future

@@ -7,16 +7,19 @@ from __future__ import annotations
 from pyro.router.cascade import (
     build_model_list,
     build_router,
+    cascade_entrypoint,
     concrete_model_names,
     concrete_model_params,
     graph_model_params,
 )
-from pyro.router.retry import call_with_rate_limit_retry, stream_with_rate_limit_retry
+from pyro.router.opencode_go import call_opencode_go_direct
+from pyro.router.retry import stream_with_rate_limit_retry
 
 __all__ = [
     "build_model_list",
     "build_router",
-    "call_with_rate_limit_retry",
+    "call_opencode_go_direct",
+    "cascade_entrypoint",
     "concrete_model_names",
     "concrete_model_params",
     "graph_model_params",

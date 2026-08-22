@@ -183,9 +183,6 @@ class Database:
     def save_job(self, doc: dict[str, Any]) -> None:
         self.jobs.save(doc)
 
-    def get_job(self, job_id: str) -> dict[str, Any] | None:
-        return self.jobs.get(job_id)
-
     def list_jobs(self, limit: int = 50) -> list[dict[str, Any]]:
         return self.jobs.list_recent(limit)
 

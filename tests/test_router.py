@@ -4,9 +4,11 @@ from pyro.config import Settings
 from pyro.router import (
     build_model_list,
     build_router,
+    cascade_entrypoint,
     concrete_model_names,
     concrete_model_params,
 )
+from pyro.router.cascade import FREE_GROUP, PAID_GROUP
 
 
 def test_no_keys_yields_empty_model_list():
@@ -26,6 +28,8 @@ def test_openrouter_only_includes_curated_free_models_plus_meta_router():
 
 
 def test_groq_gemini_tokenrouter_and_openai_appended_when_configured():
+    """Paid-tier deployments (groq/gemini/tokenrouter/openai) come first — build_router's
+    fallback chain tries the whole paid group before ever touching the free group."""
     settings = Settings(
         _env_file=None,
         openrouter_api_key="or-key",
@@ -35,11 +39,50 @@ def test_groq_gemini_tokenrouter_and_openai_appended_when_configured():
         openai_api_key="oa-key",
     )
     names = concrete_model_names(settings)
-    assert names[-4] == "groq/llama-3.3-70b-versatile"
-    assert names[-3] == "gemini/gemini-2.5-flash"
-    assert names[-2] == "openai/deepseek/deepseek-v4-flash-0731"
-    assert names[-1] == "gpt-4o-mini"
+    assert names[0] == "groq/llama-3.3-70b-versatile"
+    assert names[1] == "gemini/gemini-2.5-flash"
+    assert names[2] == "openai/deepseek/deepseek-v4-flash-0731"
+    assert names[3] == "gpt-4o-mini"
+    assert names[4:] == [
+        "openrouter/openai/gpt-oss-20b:free",
+        "openrouter/nvidia/nemotron-3-super-120b-a12b:free",
+        "openrouter/google/gemma-4-31b-it:free",
+        "openrouter/openrouter/free",
+    ]
     assert len(names) == 8
+
+
+def test_paid_and_free_deployments_tagged_into_separate_groups():
+    settings = Settings(
+        _env_file=None,
+        openrouter_api_key="or-key",
+        groq_api_key="gq-key",
+    )
+    model_list = build_model_list(settings)
+    group_names = {entry["model_name"] for entry in model_list}
+    assert group_names == {PAID_GROUP, FREE_GROUP}
+    assert model_list[0]["model_name"] == PAID_GROUP  # groq
+    assert model_list[-1]["model_name"] == FREE_GROUP  # openrouter free
+
+
+def test_cascade_entrypoint_prefers_paid_then_free_then_none():
+    assert cascade_entrypoint(Settings(_env_file=None, groq_api_key="gq-key")) == PAID_GROUP
+    assert (
+        cascade_entrypoint(Settings(_env_file=None, openrouter_api_key="or-key")) == FREE_GROUP
+    )
+    assert cascade_entrypoint(Settings(_env_file=None)) is None
+
+
+def test_build_router_wires_paid_to_free_fallback_when_both_configured():
+    settings = Settings(_env_file=None, openrouter_api_key="or-key", groq_api_key="gq-key")
+    router = build_router(settings)
+    assert router.fallbacks == [{PAID_GROUP: [FREE_GROUP]}]
+
+
+def test_build_router_has_no_fallbacks_with_only_one_group_configured():
+    settings = Settings(_env_file=None, openrouter_api_key="or-key")
+    router = build_router(settings)
+    assert not router.fallbacks
 
 
 def test_tokenrouter_only_tier_uses_openai_compatible_passthrough():

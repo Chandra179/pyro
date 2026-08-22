@@ -1,6 +1,7 @@
-"""Wrappers around a single litellm acompletion() call that add provider-level rate-limit
-retry — separate from router/cascade.py's job of deciding *which* model/credentials to call
-with; these just make one such call resilient, blocking or streaming."""
+"""Rate-limit retry for a single streaming litellm acompletion() call — separate from
+router/cascade.py's job of deciding *which* model/credentials to call with. Non-streaming calls go
+through litellm's own Router (build_router) instead, whose num_retries/cooldown_time/allowed_fails
+already cover this; graph/merge.py's single fixed-model streaming pass doesn't use Router."""
 
 from __future__ import annotations
 
@@ -29,34 +30,16 @@ def _log_rate_limit_retry(settings: Settings, retry_state) -> None:
     )
 
 
-async def call_with_rate_limit_retry(
-    fn: Callable[[], Awaitable[T]], settings: Settings
-) -> T:
-    """Retry fn() on RateLimitError, waiting router.rate_limit_wait_seconds between attempts —
-    needed since a provider-level throttle can be far tighter than the cascade's own
-    num_retries/cooldown_time, which only governs advancing to the *next* tier."""
-    async for attempt in AsyncRetrying(
-        stop=stop_after_attempt(settings.router.rate_limit_max_retries),
-        wait=wait_fixed(settings.router.rate_limit_wait_seconds),
-        retry=retry_if_exception_type(RateLimitError),
-        before_sleep=lambda retry_state: _log_rate_limit_retry(settings, retry_state),
-        reraise=True,
-    ):
-        with attempt:
-            return await fn()
-    raise AssertionError("unreachable — AsyncRetrying always returns or raises")
-
-
 async def stream_with_rate_limit_retry(
     fn: Callable[[], Awaitable[T]],
     settings: Settings,
     on_chunk: Callable[[str, str], None],
 ) -> tuple[str, str]:
-    """Streaming sibling of call_with_rate_limit_retry: fn() must return an acompletion(...,
-    stream=True) call. Calls on_chunk(content_piece, reasoning_piece) as each chunk arrives and
-    returns the full (content, reasoning) once the stream ends. Only retries a RateLimitError
-    before the first chunk — a stream failing partway through can't be replayed without
-    duplicating what on_chunk already saw, so any mid-stream failure propagates immediately."""
+    """fn() must return an acompletion(..., stream=True) call. Calls on_chunk(content_piece,
+    reasoning_piece) as each chunk arrives and returns the full (content, reasoning) once the
+    stream ends. Only retries a RateLimitError before the first chunk — a stream failing partway
+    through can't be replayed without duplicating what on_chunk already saw, so any mid-stream
+    failure propagates immediately."""
     async for attempt in AsyncRetrying(
         stop=stop_after_attempt(settings.router.rate_limit_max_retries),
         wait=wait_fixed(settings.router.rate_limit_wait_seconds),

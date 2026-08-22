@@ -1,6 +1,6 @@
 import json
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -20,12 +20,24 @@ def _fake_response(content: str):
     return SimpleNamespace(choices=[choice])
 
 
-def _config(model_params: list[dict]) -> ExtractionRunConfig:
+def _settings_with_paid_key() -> Settings:
+    """A configured paid-tier key so cascade_entrypoint resolves to a real group and
+    _run_model_cascade actually calls into the (fake) router below."""
+    return Settings(_env_file=None, groq_api_key="test-key")
+
+
+def _fake_router(*, return_value=None, side_effect=None):
+    """Duck-typed stand-in for litellm.Router: only `.acompletion` is ever called."""
+    acompletion = AsyncMock(return_value=return_value, side_effect=side_effect)
+    return SimpleNamespace(acompletion=acompletion), acompletion
+
+
+def _config(router) -> ExtractionRunConfig:
     return ExtractionRunConfig(
-        model_params=model_params,
+        router=router,
         system_prompt="sys",
         user_template="user {title}",
-        settings=Settings(),
+        settings=_settings_with_paid_key(),
     )
 
 
@@ -41,13 +53,8 @@ VALID_JSON = json.dumps(
 
 @pytest.mark.asyncio
 async def test_first_model_success_no_fallback():
-    with patch(
-        "pyro.extract.pipeline.acompletion",
-        new=AsyncMock(return_value=_fake_response(VALID_JSON)),
-    ) as mock_call:
-        graph = await extract_chunk(
-            "t", "u", "c", _config([{"model": "model-a"}, {"model": "model-b"}])
-        )
+    router, mock_call = _fake_router(return_value=_fake_response(VALID_JSON))
+    graph = await extract_chunk("t", "u", "c", _config(router))
     assert graph.entities[0].name == "Zuul"
     assert mock_call.call_count == 1
 
@@ -55,11 +62,8 @@ async def test_first_model_success_no_fallback():
 @pytest.mark.asyncio
 async def test_falls_back_on_malformed_json():
     responses = [_fake_response("not json at all"), _fake_response(VALID_JSON)]
-    mock_call = AsyncMock(side_effect=responses)
-    with patch("pyro.extract.pipeline.acompletion", new=mock_call):
-        graph = await extract_chunk(
-            "t", "u", "c", _config([{"model": "model-a"}, {"model": "model-b"}])
-        )
+    router, mock_call = _fake_router(side_effect=responses)
+    graph = await extract_chunk("t", "u", "c", _config(router))
     assert graph.entities[0].name == "Zuul"
     assert mock_call.call_count == 2
 
@@ -68,11 +72,8 @@ async def test_falls_back_on_malformed_json():
 async def test_falls_back_on_schema_invalid_json():
     bad = json.dumps({"entities": "not a list"})  # wrong type
     responses = [_fake_response(bad), _fake_response(VALID_JSON)]
-    mock_call = AsyncMock(side_effect=responses)
-    with patch("pyro.extract.pipeline.acompletion", new=mock_call):
-        graph = await extract_chunk(
-            "t", "u", "c", _config([{"model": "model-a"}, {"model": "model-b"}])
-        )
+    router, mock_call = _fake_router(side_effect=responses)
+    graph = await extract_chunk("t", "u", "c", _config(router))
     assert graph.entities[0].name == "Zuul"
     assert mock_call.call_count == 2
 
@@ -80,23 +81,18 @@ async def test_falls_back_on_schema_invalid_json():
 @pytest.mark.asyncio
 async def test_repairs_markdown_fenced_json():
     fenced = f"```json\n{VALID_JSON}\n```"
-    with patch(
-        "pyro.extract.pipeline.acompletion",
-        new=AsyncMock(return_value=_fake_response(fenced)),
-    ):
-        graph = await extract_chunk("t", "u", "c", _config([{"model": "model-a"}]))
+    router, _ = _fake_router(return_value=_fake_response(fenced))
+    graph = await extract_chunk("t", "u", "c", _config(router))
     assert graph.entities[0].name == "Zuul"
 
 
 @pytest.mark.asyncio
 async def test_all_models_fail_raises():
-    mock_call = AsyncMock(side_effect=RuntimeError("503 outage"))
-    with patch("pyro.extract.pipeline.acompletion", new=mock_call):
-        with pytest.raises(RuntimeError, match="all models in cascade failed"):
-            await extract_chunk(
-                "t", "u", "c", _config([{"model": "model-a"}, {"model": "model-b"}])
-            )
-    assert mock_call.call_count == 2
+    router, mock_call = _fake_router(side_effect=RuntimeError("503 outage"))
+    config = _config(router)
+    with pytest.raises(RuntimeError, match="all models in cascade failed"):
+        await extract_chunk("t", "u", "c", config)
+    assert mock_call.call_count == config.settings.router.cascade_parse_retry_attempts
 
 
 def test_merge_graph_chunks_dedupes_entities_case_insensitively():

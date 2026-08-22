@@ -34,11 +34,9 @@ _DASHBOARD_DIR = Path(__file__).resolve().parents[1] / "dashboard"
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
-    # Best-effort: a database that isn't reachable yet at startup shouldn't stop the dashboard
-    # from serving — every other route already handles a down database gracefully (see
-    # _data_context's try/except below). hydrate_jobs repopulates JOBS (still needed by the
-    # background job runner in api/jobs.py) and rewrites any job left mid-stage by a prior
-    # process's death to "error", so it isn't skipped even though no page lists jobs anymore.
+    # Best-effort: a database not yet reachable at startup shouldn't stop the dashboard from
+    # serving (other routes handle a down database gracefully too). hydrate_jobs repopulates JOBS
+    # and rewrites any job left mid-stage by a prior process's death to "error".
     try:
         with open_db_from_settings(get_settings()) as database:
             hydrate_jobs(database)

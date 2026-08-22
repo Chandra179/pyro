@@ -20,9 +20,8 @@ DOMAINS: list[str] = Settings().domains
 EntityKind = Literal["service", "datastore", "queue", "external_system", "library", "model", "team"]
 
 # Controlled vocabulary for relationship predicates: `relation` used to be free text, so "writes
-# to"/"writes-to"/"persists to"/"stores data in" became four distinct edges between the same pair
-# of nodes (Database.upsert_relationship keys on relation). The model's original wording isn't
-# discarded — normalize_relation below moves it to `relation_phrase` for display/auditing.
+# to"/"persists to"/"stores data in" became distinct edges between the same nodes. The model's
+# original wording isn't discarded — normalize_relation moves it to `relation_phrase`.
 RelationKind = Literal[
     "calls",
     "routes_to",
@@ -45,10 +44,9 @@ RelationKind = Literal[
 
 RELATION_KINDS: list[str] = list(RelationKind.__args__)
 
-# Maps phrasings models actually emit onto the vocabulary; keys matched after lowercasing and
-# collapsing non-alphanumerics to spaces. Matched as a *prefix* (see normalize_relation) because
-# phrases often carry a trailing qualifier ("uses for distributed tracing") — whole-string-only
-# matching once sent 21 of 26 edges in a real graph to the fallback.
+# Maps phrasings models emit onto the vocabulary; keys matched after lowercasing and collapsing
+# non-alphanumerics to spaces, as a *prefix* — phrases often carry a trailing qualifier ("uses for
+# distributed tracing"), and whole-string matching once sent 21 of 26 edges to the fallback.
 _RELATION_SYNONYMS: dict[str, str] = {
     "calls": "calls",
     "invokes": "calls",
@@ -224,12 +222,10 @@ class ExtractedRelationship(BaseModel):
     # Model's original wording, kept when it differed from the canonical predicate.
     relation_phrase: str | None = None
     as_of: str | None = None
-    # True when the deterministic tier found no vocabulary/synonym match at all, so `relation` is
-    # currently just `_FALLBACK_RELATION` as a placeholder — extract/pipeline.py runs the async
-    # LLM fallback tier (extract/relation_resolve.py) over every relationship still flagged this
-    # way once a whole article's chunks are parsed, mirroring graph/resolve.py's two-tier pattern
-    # for entity names. Excluded from model_dump() — nothing downstream of a resolved graph needs
-    # this, it only exists as a same-process signal between the two tiers.
+    # True when the deterministic tier found no match, so `relation` is just `_FALLBACK_RELATION` —
+    # extract/relation_resolve.py's LLM tier resolves these after an article's chunks are parsed.
+    # Excluded from model_dump(): a same-process signal between the two tiers, nothing downstream
+    # needs it.
     needs_relation_review: bool = Field(default=False, exclude=True)
 
     @model_validator(mode="before")

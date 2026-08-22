@@ -55,7 +55,7 @@ async def test_run_extraction_marks_every_successful_article():
     settings = Settings(_env_file=None, openrouter_api_key="or-key")
     db = _FakeDb([_article("a1"), _article("a2"), _article("a3")])
     with patch(
-        "pyro.extract.pipeline.acompletion",
+        "litellm.Router.acompletion",
         new=AsyncMock(return_value=_fake_response(VALID_JSON)),
     ):
         count = await run_extraction(db, settings)
@@ -65,9 +65,9 @@ async def test_run_extraction_marks_every_successful_article():
 
 @pytest.mark.asyncio
 async def test_run_extraction_one_failed_cascade_does_not_block_the_rest():
-    """"bad"'s cascade exhausts every model in the tier list; run_extraction's per-article
-    try/except must catch that RuntimeError, log it, and leave "bad" unmarked — not propagate
-    and abort "good", which is processed concurrently in the same asyncio.gather batch."""
+    """"bad"'s cascade exhausts every retry attempt; run_extraction's per-article try/except must
+    catch that RuntimeError, log it, and leave "bad" unmarked — not propagate and abort "good",
+    which is processed concurrently in the same asyncio.gather batch."""
     settings = Settings(_env_file=None, openrouter_api_key="or-key")
     db = _FakeDb([_article("bad"), _article("good")])
 
@@ -77,9 +77,7 @@ async def test_run_extraction_one_failed_cascade_does_not_block_the_rest():
             raise RuntimeError("503 from provider")
         return _fake_response(VALID_JSON)
 
-    with patch(
-        "pyro.extract.pipeline.acompletion", new=AsyncMock(side_effect=fake_acompletion)
-    ):
+    with patch("litellm.Router.acompletion", new=AsyncMock(side_effect=fake_acompletion)):
         count = await run_extraction(db, settings)
     assert count == 2  # both articles were attempted
     assert db.marked == ["good"]  # only the one whose cascade actually succeeded
@@ -89,9 +87,7 @@ async def test_run_extraction_one_failed_cascade_does_not_block_the_rest():
 async def test_run_extraction_no_unprocessed_articles_is_a_noop():
     settings = Settings(_env_file=None, openrouter_api_key="or-key")
     db = _FakeDb([])
-    with patch(
-        "pyro.extract.pipeline.acompletion", new=AsyncMock()
-    ) as mock_call:
+    with patch("litellm.Router.acompletion", new=AsyncMock()) as mock_call:
         count = await run_extraction(db, settings)
     assert count == 0
     assert db.marked == []

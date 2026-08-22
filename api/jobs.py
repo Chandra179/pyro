@@ -46,16 +46,6 @@ JobStatus = Literal[
     "pending", "scraping", "cleaning", "extracting", "merging", "done", "error"
 ]
 
-_STAGE_LABELS: dict[JobStatus, str] = {
-    "pending": "Queued",
-    "scraping": "Scraping",
-    "cleaning": "Cleaning HTML",
-    "extracting": "Extracting system map",
-    "merging": "Merging into graph",
-    "done": "Done",
-    "error": "Failed",
-}
-
 
 @dataclass
 class GraphMergeCall:
@@ -185,10 +175,6 @@ class Job:
     created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
 
     @property
-    def status_label(self) -> str:
-        return _STAGE_LABELS[self.status]
-
-    @property
     def is_finished(self) -> bool:
         return self.status in ("done", "error")
 
@@ -229,20 +215,15 @@ class Job:
         return job
 
 
-# Process-local job store, newest first when listed. Bounded because a Job retains every byte of
-# every merge call it streamed: an unbounded dict in a long-running dashboard is a slow leak whose
-# size is driven by model output, not by job count. Insertion-ordered, so evicting the oldest
-# finished job is just walking from the front.
+# Process-local job store, newest first when listed. Bounded: a Job retains every byte of every
+# merge call it streamed, so an unbounded dict would slow-leak with model output, not job count.
 JOBS: dict[str, Job] = {}
 MAX_RETAINED_JOBS = Settings().max_retained_jobs
 
 
 def _evict_old_jobs(database: Database) -> None:
-    """Drop the oldest *finished* jobs once the store exceeds MAX_RETAINED_JOBS, from memory and
-    from the persisted `jobs` collection alike — otherwise the database log would grow without
-    bound even though the in-memory store and the Runs page both cap at MAX_RETAINED_JOBS. Running
-    jobs are never evicted regardless of age — their background thread still writes to them, and
-    their card is still polling."""
+    """Drop the oldest *finished* jobs past MAX_RETAINED_JOBS, from memory and the `jobs`
+    collection alike. Running jobs are never evicted — their thread still writes to them."""
     if len(JOBS) <= MAX_RETAINED_JOBS:
         return
     for job_id, job in list(JOBS.items()):
@@ -254,14 +235,9 @@ def _evict_old_jobs(database: Database) -> None:
 
 
 def hydrate_jobs(database: Database) -> None:
-    """Repopulate JOBS from the persisted `jobs` collection — called once at app startup
-    (api/main.py) so the Runs page and past merge histories survive a dashboard restart instead of
-    starting empty every time.
-
-    A job that isn't done/error yet has no surviving thread (the one that would have finished it
-    died with the previous process), so it's rewritten to "error" here — and that correction is
-    written back to the database too, so it doesn't keep re-appearing as a live-looking stage on
-    every subsequent restart."""
+    """Repopulate JOBS from the persisted `jobs` collection at startup (api/main.py) so past runs
+    survive a dashboard restart. A job that isn't done/error yet has no surviving thread, so it's
+    rewritten to "error" and that correction is saved back too."""
     for doc in database.list_jobs(limit=MAX_RETAINED_JOBS):
         job = Job.from_doc(doc)
         if not job.is_finished:
@@ -274,10 +250,8 @@ def hydrate_jobs(database: Database) -> None:
 async def _resolve_urls(
     url: str, settings: Settings
 ) -> tuple[list[str], Literal["sitemap", "article"]]:
-    """A submitted URL is either a sitemap.xml (crawl the whole blog) or a single
-    article page (extract just that one). `fetch_sitemap_urls` already raises
-    `ValueError` when the response isn't valid sitemap XML — reused here as the
-    detection signal instead of duplicating a content-type/extension check."""
+    """A submitted URL is either a sitemap.xml (crawl the whole blog) or a single article page.
+    Reuses fetch_sitemap_urls' ValueError on invalid XML as the detection signal."""
     try:
         urls = await fetch_sitemap_urls(url, config=settings.sitemap)
         return urls, "sitemap"
@@ -285,12 +259,8 @@ async def _resolve_urls(
         return [url], "article"
 
 
-# Bounds how many jobs actively run at once, across every company — each does Playwright-rendered
-# scraping plus a full LLM cascade run, and nothing else in the pipeline throttles that (see
-# Settings.max_concurrent_jobs's docstring). Sized once at import time from the default Settings();
-# a job submitted beyond the cap blocks at the top of _run_job with its status still "pending"
-# (never flips to "scraping") until a slot frees up — an implicit queue the dashboard already
-# renders correctly, no new job state needed.
+# Bounds concurrently running jobs across every company (see Settings.max_concurrent_jobs). A job
+# submitted beyond the cap blocks here with status still "pending" until a slot frees up.
 _JOB_SLOTS = threading.Semaphore(Settings().max_concurrent_jobs)
 
 
@@ -372,11 +342,8 @@ def submit_job(
     with open_db_from_settings(Settings()) as database:
         database.save_job(job.to_doc())
         _evict_old_jobs(database)
-    # Still an unconditional thread per job, deliberately: bounding *active* work (the semaphore
-    # inside _run_job) is what protects CPU/LLM capacity. A thread blocked waiting for a slot costs
-    # only a stack, and keeps shutdown behavior identical to before (daemon=True, no executor
-    # lifecycle to manage) — see Settings.max_concurrent_jobs's docstring for the actual risk this
-    # guards against.
+    # Unconditional thread per job, deliberately: the semaphore inside _run_job bounds *active*
+    # work, and a thread blocked waiting for a slot costs only a stack.
     threading.Thread(target=_run_job, args=(job,), daemon=True).start()
     return job
 

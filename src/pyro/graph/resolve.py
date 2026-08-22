@@ -28,12 +28,9 @@ class ResolvedName(NamedTuple):
 # systems, so fuzzy matching is only trusted above this length; shorter must match exactly or LLM.
 _MIN_FUZZY_LENGTH = 5
 
-# Relative/generic descriptions an article uses when it never names a system — "the new
-# microservice". Two unrelated articles can independently produce the same phrase, so string
-# matching (exact or fuzzy) would silently conflate unrelated systems; always route to the LLM
-# instead. Requires a qualifier *and* a generic noun after it — qualifier alone would misfire on
-# proper nouns like "New Relic". Kept broad since under-matching corrupts the graph, over-matching
-# just costs an extra LLM call.
+# Generic descriptions like "the new microservice" — two unrelated articles can independently
+# produce the same phrase, so string matching would silently conflate them; always route to the
+# LLM instead. Requires qualifier + noun together — qualifier alone misfires on "New Relic".
 _GENERIC_QUALIFIER = r"(new|old|legacy|current|existing|updated|original|previous)"
 _GENERIC_NOUN = (
     r"(service|microservice|api|system|gateway|layer|app|application|component|"

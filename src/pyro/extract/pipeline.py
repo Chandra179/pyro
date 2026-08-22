@@ -1,8 +1,9 @@
 """Bounded async extraction pipeline with per-model schema-validation retry.
 
-LiteLLM Router only advances cascade tiers on raised exceptions (429/503/timeout) — a 200 OK
-with malformed/schema-invalid JSON needs its own advance-to-next-model loop, so we iterate the
-concrete model list directly instead.
+litellm's Router only advances within/across the cascade on raised exceptions (429/503/timeout,
+handled via its own routing_strategy/allowed_fails/cooldown_time/fallbacks — see
+router/cascade.py) — a 200 OK with malformed/schema-invalid JSON isn't an exception, so it needs
+its own retry loop on top, bounded by router.cascade_parse_retry_attempts.
 """
 
 from __future__ import annotations
@@ -14,7 +15,7 @@ from dataclasses import dataclass, field
 from typing import TypeVar
 
 from json_repair import repair_json
-from litellm import acompletion
+from litellm import Router
 
 from pyro.clean.chunk import chunk_text
 from pyro.config import Settings
@@ -27,7 +28,7 @@ from pyro.extract.schema import (
     ExtractedGraph,
     merge_graph_chunks,
 )
-from pyro.router import call_with_rate_limit_retry, concrete_model_params
+from pyro.router import build_router, call_opencode_go_direct, cascade_entrypoint
 
 logger = logging.getLogger(__name__)
 
@@ -43,31 +44,55 @@ def _decoding_params(settings: Settings) -> dict:
     }
 
 
+def _build_router_or_none(settings: Settings) -> Router | None:
+    """None means no litellm-routable tier is configured — extraction still proceeds if the
+    OpenCode Go direct-call bypass is enabled (see _run_model_cascade)."""
+    try:
+        return build_router(settings)
+    except RuntimeError:
+        return None
+
+
 async def _run_model_cascade(
     messages: list[dict],
-    model_params: list[dict],
+    router: Router | None,
     parse_response: Callable[[str], T],
     decoding_params: dict | None,
     settings: Settings,
     extra_kwargs: dict | None = None,
 ) -> T:
-    """Call through the concrete model list, advancing to the next model on a raised provider
-    error or on parse_response rejecting the content (see module docstring)."""
+    """Call through the litellm Router (paid tier, falling back to free tier — see
+    router/cascade.py), retrying on a raised provider error (Router's own job) or on
+    parse_response rejecting the content (module docstring). Once the Router is exhausted, falls
+    to OpenCode Go's direct-call bypass if enabled."""
     last_error: Exception | None = None
-    for params in model_params:
-        try:
-            response = await call_with_rate_limit_retry(
-                lambda params=params: acompletion(
+    entrypoint = cascade_entrypoint(settings)
+    if router is not None and entrypoint is not None:
+        for _ in range(settings.router.cascade_parse_retry_attempts):
+            try:
+                response = await router.acompletion(
+                    model=entrypoint,
                     messages=messages,
                     **(decoding_params or {}),
                     **(extra_kwargs or {}),
-                    **params,
-                ),
+                )
+                return parse_response(response.choices[0].message.content)
+            except Exception as exc:
+                logger.warning("cascade call failed: %s", exc)
+                last_error = exc
+
+    if settings.router.opencode_go_enabled and settings.opencode_api_key:
+        try:
+            content = await call_opencode_go_direct(
+                messages,
                 settings,
+                max_tokens=settings.extraction_max_tokens,
+                decoding_params=decoding_params,
+                response_format=(extra_kwargs or {}).get("response_format"),
             )
-            return parse_response(response.choices[0].message.content)
+            return parse_response(content)
         except Exception as exc:
-            logger.warning("model %s failed: %s", params["model"], exc)
+            logger.warning("opencode go (direct) failed: %s", exc)
             last_error = exc
 
     raise RuntimeError(f"all models in cascade failed: {last_error}") from last_error
@@ -82,7 +107,7 @@ def _parse_extracted_graph(raw: str) -> ExtractedGraph:
 class ExtractionRunConfig:
     """Fixed for one `extract_article` call, shared across all its chunks."""
 
-    model_params: list[dict]
+    router: Router | None
     system_prompt: str
     user_template: str
     settings: Settings
@@ -111,7 +136,7 @@ async def extract_chunk(
     ]
     return await _run_model_cascade(
         messages,
-        config.model_params,
+        config.router,
         _parse_extracted_graph,
         config.decoding_params,
         config.settings,
@@ -124,11 +149,13 @@ async def extract_article(
     url: str,
     cleaned_text: str,
     settings: Settings,
-    model_params: list[dict] | None = None,
+    router: Router | None = None,
 ) -> ExtractedGraph:
-    """model_params defaults to rebuilding the cascade from settings; callers processing many
-    articles in one run should build it once and pass it in instead."""
-    model_params = model_params if model_params is not None else concrete_model_params(settings)
+    """router defaults to rebuilding the cascade from settings; callers processing many articles
+    in one run should build it once (via `pyro.router.build_router`, or None if nothing's
+    configured) and pass it in instead — see run_extraction."""
+    if router is None:
+        router = _build_router_or_none(settings)
     system_prompt = extraction_system_prompt(settings)
     user_template = extraction_user_prompt(settings)
     chunks = chunk_text(
@@ -137,7 +164,7 @@ async def extract_article(
         overlap_tokens=settings.chunk_overlap_tokens,
     )
     config = ExtractionRunConfig(
-        model_params=model_params,
+        router=router,
         system_prompt=system_prompt,
         user_template=user_template,
         settings=settings,
@@ -146,7 +173,7 @@ async def extract_article(
     )
     graphs = [await extract_chunk(title, url, chunk, config) for chunk in chunks]
     merged = merge_graph_chunks(graphs)
-    return await apply_relation_fallback(merged, settings, model_params)
+    return await apply_relation_fallback(merged, settings, router)
 
 
 async def run_extraction(
@@ -162,7 +189,7 @@ async def run_extraction(
         return 0
 
     sem = asyncio.Semaphore(settings.extraction_concurrency)
-    model_params = concrete_model_params(settings)
+    router = _build_router_or_none(settings)
 
     async def _process(article) -> None:
         async with sem:
@@ -172,7 +199,7 @@ async def run_extraction(
                     article.source_url,
                     article.cleaned_text,
                     settings,
-                    model_params,
+                    router,
                 )
             except Exception:
                 logger.exception("extraction failed for %s", article.id)

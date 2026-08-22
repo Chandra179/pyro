@@ -40,10 +40,14 @@ datastore, queue, external system, team) plus the relationships it explicitly st
 tagged with a domain from a fixed list. Posts are read independently at this stage — nothing here
 knows a system is the same one another post already named differently.
 
-**Model routing** sends every extraction/merge call through a prioritized list of providers
-(several free tiers first, paid last), retrying the same tier on rate limits and falling through
-to the next on outright failure. This keeps the pipeline cheap and lets it degrade gracefully
-instead of stopping when one provider is unavailable.
+**Model routing** sends every extraction call through a litellm `Router` (`router/cascade.py`)
+grouped into a paid tier (Groq, Gemini, TokenRouter, OpenAI) and a free tier (OpenRouter's curated
+free models, OpenCode Zen), each included only when its key is configured. Within a tier, the
+Router picks a deployment at random each call and ejects one that's failing repeatedly for a
+cooldown window; once the whole paid tier is exhausted, it falls through to the free tier. OpenCode
+Go is a separate opt-in last resort, called directly over `httpx` rather than through litellm —
+litellm's own error mapping misclassified its responses. This keeps the pipeline cheap and lets it
+degrade gracefully instead of stopping when one provider is unavailable.
 
 **Merge** is where reconciliation happens — the layer above can't do it, since each post is
 extracted alone. It folds each post's systems into the company's one running graph, one post at a
