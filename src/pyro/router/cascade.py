@@ -1,33 +1,10 @@
 """LiteLLM Router cascade config (docs/architecture.md, "The layers" — Model routing).
 
-Tiers are included only when their env-var key is actually configured, so the
-cascade degrades gracefully down to whatever provider(s) are available. Order:
-  1-3. OpenRouter curated free models — verified live against
-       https://openrouter.ai/api/v1/models to support `response_format`
-       (needed for our JSON extraction calls). OpenRouter's free catalog
-       rotates over time (e.g. gemini-2.5-flash:free, llama-3.3-70b-instruct:free
-       and qwen-2.5-72b-instruct:free have all since become paid-only) — if
-       these three ever go stale, `openrouter/free` below still catches it.
-  4. `openrouter/free` — OpenRouter's own built-in meta-router that auto-picks
-     a free model. Self-updating safety net against future catalog rotation.
-  5. Groq Cloud free tier (llama-3.3-70b-versatile) — very fast, tight TPM limits.
-  6. Direct Google AI Studio (Gemini) — bigger context window, 15 RPM / 1000 RPD.
-  7. OpenCode Zen free aliases (opencode.ai/zen) — rotating "-free" promo
-     model IDs (e.g. big-pickle, deepseek-v4-flash-free), same OpenAI-
-     compatible passthrough shape as the TokenRouter tiers below, gated on
-     opencode_api_key. No subscription required for these — OpenCode Zen is
-     pay-as-you-go for its paid models, separate from the $10/mo "OpenCode Go"
-     product, which this integration does not use.
-  8. TokenRouter free aliases (api.tokenrouter.com) — rotating "-free" model
-     IDs (e.g. qwen/qwen3.8-max-free) that TokenRouter itself promos as $0,
-     capacity-constrained and not guaranteed to stay free. Same OpenAI-compatible
-     passthrough as tier 9, gated on the same tokenrouter_api_key.
-  9. TokenRouter paid (api.tokenrouter.com) — OpenAI-compatible multi-provider
-     proxy, added via litellm's generic `openai/` + `api_base` passthrough
-     rather than a bespoke client (litellm already abstracts "any OpenAI-shaped
-     endpoint" — this is that abstraction point, not a new one). Sits after the
-     free tiers, before the direct-OpenAI last resort.
-  10. Paid fallback (OpenAI gpt-4o-mini) — last resort, no free-tier limits.
+Tiers are included only when their env-var key is configured, so the cascade degrades gracefully.
+Order, cheapest/free first: OpenRouter curated free models (verified to support `response_format`)
+-> `openrouter/free` meta-router as a self-updating safety net against catalog rotation -> Groq
+free tier -> direct Gemini -> OpenCode Zen free aliases -> TokenRouter free aliases -> TokenRouter
+paid (generic `openai/`+`api_base` passthrough) -> OpenAI gpt-4o-mini as last resort.
 """
 
 from __future__ import annotations
@@ -41,9 +18,8 @@ _NO_PROVIDER_ERROR = "No LLM provider configured — set at least OPENROUTER_API
 
 
 def _max_tokens_for(model: str, fallback: int) -> int:
-    """Each tier's real output cap, from litellm's model registry. Falls back to
-    `fallback` (settings.extraction_max_tokens) for custom passthrough aliases
-    litellm doesn't recognize (e.g. TokenRouter/OpenCode Zen model IDs)."""
+    """Each tier's real output cap from litellm's registry; falls back to `fallback` for custom
+    passthrough aliases litellm doesn't recognize (TokenRouter/OpenCode Zen model IDs)."""
     try:
         return litellm.get_max_tokens(model) or fallback
     except Exception:
@@ -106,7 +82,7 @@ def build_model_list(settings: Settings) -> list[dict]:
                         "model": f"openai/{model_name}",
                         "api_base": settings.router.opencode_api_base,
                         "api_key": settings.opencode_api_key,
-                        "max_tokens": default_max_tokens,  # opencode alias, not in litellm's registry
+                        "max_tokens": default_max_tokens,  # not in litellm's registry
                     },
                 }
             )
@@ -159,9 +135,8 @@ def build_router(settings: Settings | None = None) -> Router:
 def concrete_model_names(settings: Settings | None = None) -> list[str]:
     """The ordered list of concrete `litellm_params.model` values in the cascade.
 
-    Used by the extraction pipeline's schema-validation-retry loop, which needs
-    to advance through concrete models directly (Router fallback only fires on
-    raised exceptions, not on schema-invalid 200 OK responses).
+    Used by the extraction pipeline's schema-validation-retry loop, which advances through
+    concrete models directly since Router fallback only fires on raised exceptions.
     """
     settings = settings or Settings()
     return [entry["litellm_params"]["model"] for entry in build_model_list(settings)]
@@ -170,11 +145,9 @@ def concrete_model_names(settings: Settings | None = None) -> list[str]:
 def graph_model_params(settings: Settings | None = None) -> dict:
     """Credentials for the single-shot high-reasoning graph-merge pass.
 
-    Uses `settings.graph_model` (an OpenRouter free model by default) when
-    `OPENROUTER_API_KEY` is actually configured; otherwise falls back to the
-    last (highest-capability / most-paid) tier in the extraction cascade, so
-    merging still runs when only a subset of providers — e.g. just
-    TokenRouter — is configured.
+    Uses `settings.graph_model` when OPENROUTER_API_KEY is configured; otherwise falls back to
+    the last (highest-capability) tier in the extraction cascade, so merging still runs when only
+    a subset of providers is configured.
     """
     settings = settings or Settings()
     if settings.openrouter_api_key and settings.graph_model.startswith(
@@ -192,13 +165,9 @@ def graph_model_params(settings: Settings | None = None) -> dict:
 
 
 def concrete_model_params(settings: Settings | None = None) -> list[dict]:
-    """The ordered list of `litellm_params` dicts (model + credentials) in the cascade.
-
-    Unlike `concrete_model_names`, this carries each tier's `api_key`/`api_base`
-    so callers that bypass the `Router` object (see `extract/pipeline.py`) can
-    still authenticate against tiers that aren't on litellm's default env-var
-    naming convention — e.g. TokenRouter's `openai/` passthrough, which needs an
-    explicit `api_base` and a non-`OPENAI_API_KEY` credential.
+    """Like `concrete_model_names`, but also carries each tier's `api_key`/`api_base` so callers
+    bypassing the `Router` object (extract/pipeline.py) can authenticate against tiers outside
+    litellm's default env-var naming convention (e.g. TokenRouter's `openai/` passthrough).
     """
     settings = settings or Settings()
     return [dict(entry["litellm_params"]) for entry in build_model_list(settings)]

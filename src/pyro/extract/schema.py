@@ -14,22 +14,15 @@ from pyro.config import Settings
 
 logger = logging.getLogger(__name__)
 
-# Reused as a tag on entities/relationships, not a classifier anymore — kept specifically so a
-# later cross-company comparison feature has a shared axis to align topics on across companies.
+# Just a tag now, not a classifier — kept as a shared axis for a future cross-company comparison.
 DOMAINS: list[str] = Settings().domains
 
 EntityKind = Literal["service", "datastore", "queue", "external_system", "team"]
 
-# Controlled vocabulary for relationship predicates.
-#
-# `kind` and `domain` have always been constrained; `relation` used to be free text straight off
-# the model, which meant "writes to", "writes-to", "persists to" and "stores data in" became four
-# distinct edges between the same pair of nodes — Database.upsert_relationship keys on the
-# relation, so synonyms accumulated as duplicate edges and cluttered every rendered diagram.
-# Constraining the predicate is what makes an edge between two systems mean one thing.
-#
-# The model's own wording is not discarded: normalize_relation below moves it to `relation_phrase`,
-# stored on the edge as a non-key property for display and for auditing a canonicalization.
+# Controlled vocabulary for relationship predicates: `relation` used to be free text, so "writes
+# to"/"writes-to"/"persists to"/"stores data in" became four distinct edges between the same pair
+# of nodes (Database.upsert_relationship keys on relation). The model's original wording isn't
+# discarded — normalize_relation below moves it to `relation_phrase` for display/auditing.
 RelationKind = Literal[
     "calls",
     "routes_to",
@@ -52,15 +45,10 @@ RelationKind = Literal[
 
 RELATION_KINDS: list[str] = list(RelationKind.__args__)
 
-# Maps the phrasings models actually emit onto the vocabulary. Keys are matched against the
-# model's `relation` after lowercasing and collapsing non-alphanumerics to single spaces, so one
-# entry covers "writes-to", "Writes To" and "writes_to" alike.
-#
-# Entries are ordered longest-first at match time, and matched as a *prefix* of the phrase (see
-# normalize_relation), because the dominant real-world shape is a known predicate carrying a
-# trailing qualifier: "uses for distributed tracing", "downloads rule sets from", "hosts migrated
-# route handlers from". Matching only whole strings sent all of those to the fallback, which is how
-# a first pass over a real graph ended up with 21 of 26 edges reading `depends_on`.
+# Maps phrasings models actually emit onto the vocabulary; keys matched after lowercasing and
+# collapsing non-alphanumerics to spaces. Matched as a *prefix* (see normalize_relation) because
+# phrases often carry a trailing qualifier ("uses for distributed tracing") — whole-string-only
+# matching once sent 21 of 26 edges in a real graph to the fallback.
 _RELATION_SYNONYMS: dict[str, str] = {
     "calls": "calls",
     "invokes": "calls",
@@ -169,9 +157,8 @@ _SYNONYMS_BY_LENGTH: list[tuple[str, str]] = sorted(
     _RELATION_SYNONYMS.items(), key=lambda kv: -len(kv[0])
 )
 
-# Generic enough to be honest about "these two systems are connected, in an unrecognized way"
-# without inventing a direction-specific claim the article may not support. Reaching this should
-# be rare — if it stops being rare, the vocabulary or the synonym table is missing something real.
+# Generic enough not to invent a direction-specific claim the article may not support. Should be
+# rare — see TODO.md item 2 for the fallback-rate check before building anything fancier.
 _FALLBACK_RELATION = "depends_on"
 
 
@@ -201,10 +188,7 @@ def normalize_relation(raw: str) -> str:
         ):
             return canonical
 
-    # No entry in the vocabulary or synonym table recognized this phrasing — falling back is
-    # silent to callers by design (extraction must not fail on it), but that also means vocabulary
-    # drift is invisible unless it's logged here. Grep this warning to see what the synonym table
-    # is missing before it accumulates into a diagram full of misleadingly generic edges.
+    # Falling back is silent to callers by design; log so vocabulary drift stays visible.
     logger.warning("relation %r matched no vocabulary/synonym entry; falling back to %r", raw, _FALLBACK_RELATION)
     return _FALLBACK_RELATION
 
@@ -213,9 +197,7 @@ class ExtractedEntity(BaseModel):
     name: str
     kind: EntityKind = "service"
     domain: str = "Other"
-    # One-sentence disambiguator from the article, most useful when `name` couldn't be a real
-    # proper noun (e.g. the article never names "the new microservice") — see graph/resolve.py's
-    # generic-name handling, which is what actually consumes this at merge time.
+    # Disambiguator, most useful when `name` isn't a real proper noun — see graph/resolve.py.
     description: str | None = None
 
 
@@ -223,8 +205,7 @@ class ExtractedRelationship(BaseModel):
     source: str
     target: str
     relation: RelationKind
-    # The model's original wording, kept whenever it differed from the canonical predicate — so
-    # narrowing to the vocabulary stays reversible and inspectable rather than lossy.
+    # Model's original wording, kept when it differed from the canonical predicate.
     relation_phrase: str | None = None
     as_of: str | None = None
 
@@ -249,11 +230,9 @@ class ExtractedGraph(BaseModel):
 
 
 def merge_graph_chunks(chunks: list[ExtractedGraph]) -> ExtractedGraph:
-    """Merge per-chunk extraction results for one article. Entities are deduped by
-    case-insensitive name and relationships by (source, target, relation) — cheap, since within
-    one article the same system is almost always mentioned with the same name across its own
-    chunks. Reconciling names *across different articles* is a separate, harder concern handled
-    by the graph-merge pass, not here."""
+    """Merge per-chunk extraction results for one article: dedup entities by case-insensitive
+    name, relationships by (source, target, relation). Reconciling names *across* articles is
+    the graph-merge pass's job, not this one."""
     entities: dict[str, ExtractedEntity] = {}
     for chunk in chunks:
         for entity in chunk.entities:
@@ -264,9 +243,6 @@ def merge_graph_chunks(chunks: list[ExtractedGraph]) -> ExtractedGraph:
     relationships: dict[tuple[str, str, str], ExtractedRelationship] = {}
     for chunk in chunks:
         for rel in chunk.relationships:
-            # `relation` is already canonical here (validated onto RelationKind), so two chunks
-            # phrasing the same edge differently now collapse into one instead of surviving as
-            # near-duplicate edges.
             key = (rel.source.strip().lower(), rel.target.strip().lower(), rel.relation)
             if key[0] and key[1] and key not in relationships:
                 relationships[key] = rel

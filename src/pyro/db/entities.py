@@ -28,20 +28,13 @@ class EntityRepository:
         description: str | None = None,
         alias_method: str | None = None,
     ) -> str:
-        """Create the entity if new, or fold `alias` into an existing one — the graph-merge pass
-        has already decided whether `name` is a brand-new entity or the canonical name of one
-        that already exists; this just persists that decision idempotently. Returns the entity's
-        key.
+        """Create the entity if new, or fold `alias` into an existing one. Returns the entity's key.
 
-        `description` is kept as a disambiguator — most useful when `name` is a generic,
-        non-proper-noun phrase (see graph/resolve.py). The first non-empty description wins rather
-        than being overwritten on every re-merge, since later mentions of an already-known entity
-        are typically passing references with less context than the article that introduced it.
-
-        Each alias is stored with `alias_method` ("exact" / "fuzzy:<score>" / "llm" — see
-        graph/resolve.py's `ResolvedName`) alongside it: an audit trail for *why* two names were
-        judged the same system, not just that they were. Without it a bad merge is unfixable
-        without replaying the whole merge history to figure out which decision was shaky."""
+        The first non-empty `description` wins rather than being overwritten on re-merge, since
+        later mentions of a known entity are typically less informative than the introducing one.
+        Each alias is stored with `alias_method` ("exact"/"fuzzy:<score>"/"llm") as an audit trail
+        for why two names were judged the same system — without it a bad merge is unfixable
+        without replaying the whole merge history."""
         key = entity_key(company_name, name)
         existing = self._col.get(key)
         new_alias = (
@@ -64,8 +57,7 @@ class EntityRepository:
                 }
             )
         else:
-            # Aliases written before this field existed are plain strings; normalize them
-            # in-place (method/recorded_at unknown, not fabricated) rather than dropping them.
+            # Pre-existing aliases may be plain strings (older schema); normalize in place.
             by_name = {
                 a["name"] if isinstance(a, dict) else a: (
                     a if isinstance(a, dict) else {"name": a, "method": None, "recorded_at": None}
@@ -85,9 +77,8 @@ class EntityRepository:
         return key
 
     def list_names(self, company_name: str) -> list[str]:
-        """Flat list of canonical entity names for company_name — the cheap context the
-        graph-merge pass matches against (see graph/resolve.py) before deciding what, if
-        anything, still needs a model call."""
+        """Canonical entity names for company_name, matched against before falling back to an LLM
+        call (see graph/resolve.py)."""
         query = """
         FOR doc IN @@col
           FILTER doc.company_name == @company_name

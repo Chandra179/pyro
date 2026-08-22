@@ -1,16 +1,6 @@
-"""ArangoDB storage for pipeline state (raw/cleaned/extracted articles) and for the
-company-wide entity/relationship graph merged from them.
+"""ArangoDB storage: article pipeline state plus the company-wide entity/relationship graph.
 
-Three collections in a single ArangoDB database, all scoped by `company_name` so one database
-serves every company:
-  - articles (document): one per scraped article — see db/articles.py.
-  - entities (document): one per resolved system/service/datastore — see db/entities.py.
-  - relationships (**edge**): one per resolved connection between two entities, carrying
-    `_from`/`_to` handles into `entities` so the graph is traversable in AQL — see
-    db/relationships.py.
-
-`Database` (db/database.py) is the facade over all three; import it from here rather than from
-the submodule, so the internal layout stays free to move.
+Import `Database` from here rather than the submodule, so the internal layout stays free to move.
 """
 
 from __future__ import annotations
@@ -86,7 +76,7 @@ def open_db(
 
 @contextmanager
 def open_db_from_settings(settings: Settings) -> Iterator[Database]:
-    """Same as open_db, but reads connection params off a pyro.config.Settings instance."""
+    """Same as open_db, but reads connection params off a Settings instance."""
     params = connection_params_from_settings(settings)
     with open_db(
         host=params.host,

@@ -1,9 +1,8 @@
 """Bounded async extraction pipeline with per-model schema-validation retry.
 
-Plan.md 'Validation Layer': the LiteLLM Router only advances tiers on raised
-exceptions (429/503/timeout). A 200 OK response with malformed/schema-invalid
-JSON needs its own advance-to-next-model loop, so we iterate the concrete
-model list directly rather than relying on Router's internal fallback state.
+LiteLLM Router only advances cascade tiers on raised exceptions (429/503/timeout) — a 200 OK
+with malformed/schema-invalid JSON needs its own advance-to-next-model loop, so we iterate the
+concrete model list directly instead.
 """
 
 from __future__ import annotations
@@ -35,10 +34,8 @@ T = TypeVar("T")
 
 
 def _decoding_params(settings: Settings) -> dict:
-    """Shared temperature/frequency_penalty for extraction calls — see
-    Settings.extraction_temperature docstring for why these matter against free-tier models.
-    max_tokens is deliberately not here: it's tier-specific (see router._max_tokens_for) and
-    comes from each model's own `params` in extract_chunk below."""
+    """Shared temperature/frequency_penalty for extraction calls (see Settings docstring).
+    max_tokens excluded — it's tier-specific, from each model's own `params` below."""
     return {
         "temperature": settings.extraction_temperature,
         "frequency_penalty": settings.extraction_frequency_penalty,
@@ -53,11 +50,8 @@ async def _run_model_cascade(
     settings: Settings,
     extra_kwargs: dict | None = None,
 ) -> T:
-    """Call through the concrete model list, applying parse_response to each response and
-    advancing to the next model on any failure — a raised provider error (429/503/timeout/etc.)
-    or parse_response rejecting the content (schema-invalid JSON, degenerate output, ...). The
-    Router's own fallback only advances tiers on raised exceptions, so a 200 OK response that
-    parse_response rejects needs this loop rather than Router's internal fallback state."""
+    """Call through the concrete model list, advancing to the next model on a raised provider
+    error or on parse_response rejecting the content (see module docstring)."""
     last_error: Exception | None = None
     for params in model_params:
         try:
@@ -85,9 +79,7 @@ def _parse_extracted_graph(raw: str) -> ExtractedGraph:
 
 @dataclass(frozen=True)
 class ExtractionRunConfig:
-    """Everything about an extraction run that's fixed once per `extract_article` call and shared
-    across all of that article's chunks — built once so it doesn't get recomputed (or
-    positionally reordered) per chunk in the loop below."""
+    """Fixed for one `extract_article` call, shared across all its chunks."""
 
     model_params: list[dict]
     system_prompt: str
@@ -133,9 +125,8 @@ async def extract_article(
     settings: Settings,
     model_params: list[dict] | None = None,
 ) -> ExtractedGraph:
-    """model_params defaults to rebuilding the cascade from settings, but callers processing
-    many articles from the same run (see run_extraction) should build it once and pass it in —
-    settings don't change mid-run, so recomputing per article is redundant."""
+    """model_params defaults to rebuilding the cascade from settings; callers processing many
+    articles in one run should build it once and pass it in instead."""
     model_params = model_params if model_params is not None else concrete_model_params(settings)
     system_prompt = extraction_system_prompt(settings)
     user_template = extraction_user_prompt(settings)

@@ -1,16 +1,9 @@
-"""Dashboard pipeline-run documents: one per submitted job (api/jobs.py's scrape -> clean ->
-extract -> merge-graph run), so the Runs page and a run's merge-call transcript survive a
-dashboard restart.
+"""Dashboard pipeline-run documents: one per submitted job, so the Runs page and a run's
+merge-call transcript survive a dashboard restart.
 
-Written at coarse granularity — once per pipeline-stage transition, and once per merge call as it
-finishes — never per streamed token. Replaying byte-for-byte into a database on every chunk would
-reintroduce the O(n^2)-per-tick cost api/sse.py's docstring describes replacing; a job's `save`
-call carries the merge history's *current* accumulated content each time, same as what the SSE
-stream itself sends, just far less often.
-
-Not scoped by company_name the way articles/entities/relationships are — a job belongs to one
-company, but the Runs page lists every company's jobs together — though each stored document
-still carries company_name for reference.
+Written at coarse granularity — per pipeline-stage transition and per finished merge call, never
+per streamed token. Not scoped by company_name like articles/entities/relationships — the Runs
+page lists every company's jobs together — though each document still carries company_name.
 """
 
 from __future__ import annotations

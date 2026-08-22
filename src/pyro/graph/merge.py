@@ -1,16 +1,10 @@
-"""Graph-merge pass: each extracted article's entities/relationships (extract/pipeline.py's
-output) get folded into company_name's company-wide entity graph, replacing the old prose
-synthesis stage (docs/architecture.md, "The layers" — Graph merge).
+"""Graph-merge pass: each extracted article's entities/relationships get folded into
+company_name's company-wide entity graph (docs/architecture.md, "The layers" — Graph merge).
 
-Resolution runs in two tiers. A deterministic pass (graph/resolve.py) matches this article's
-entity names against the company's existing ones by exact and fuzzy string match; only the names
-it can't settle reach the LLM, which is shown those unresolved entities plus the existing names
-most similar to them, and asked to decide per entity whether it's the same system as an existing
-one (reuse that exact name) or new (keep the article's own name). An article whose entities all
-resolve deterministically costs no model call at all.
-
-That resolution is the only thing the merge prompt decides — kind/domain/relationships all come
-straight from extraction, unchanged.
+Resolution runs in two tiers: a deterministic pass (graph/resolve.py) matches entity names by
+exact/fuzzy string match; only names it can't settle reach the LLM, shown the unresolved entities
+plus the most-similar existing names. That resolution is the only thing the merge prompt decides —
+kind/domain/relationships all come straight from extraction, unchanged.
 """
 
 from __future__ import annotations
@@ -34,25 +28,21 @@ logger = logging.getLogger(__name__)
 
 
 class ResolvedNameItem(BaseModel):
-    """One entry of the merge call's raw JSON response — distinct from graph.resolve.ResolvedName
-    (the canonical/method pair the rest of this module works with) to avoid the two colliding."""
+    """One entry of the merge call's raw JSON response — distinct from graph.resolve.ResolvedName."""
 
     article_name: str
     canonical_name: str
 
 
 class ResolutionResponse(BaseModel):
-    """The merge call's expected JSON shape. Modelled rather than dict-walked so a malformed
-    response fails in one place with a useful error, matching how extract/schema.py already
-    validates the extraction call's output."""
+    """The merge call's expected JSON shape, modelled so a malformed response fails in one place."""
 
     resolved: list[ResolvedNameItem] = []
 
 
 class GraphReporter:
-    """Progress hook for a graph-merge run's individual LLM calls. No-op by default (CLI/cron
-    usage); api/jobs.py supplies a Job-backed subclass so the dashboard can stream each call's
-    output live and keep it as history after the run finishes."""
+    """Progress hook for a graph-merge run's individual LLM calls. No-op by default; api/jobs.py
+    supplies a Job-backed subclass so the dashboard can stream each call's output live."""
 
     def start_call(self, label: str, model: str) -> None:
         pass
@@ -67,10 +57,8 @@ class GraphReporter:
         relationships_count: int,
         llm_resolved_count: int,
     ) -> None:
-        """What the current call's article actually did to the graph. Reported once, after
-        entities/relationships are upserted — deliberately *before* `end_call`, so a subclass
-        that flips a "done" UI state on `end_call` never observes a call marked done with no
-        summary attached yet."""
+        """Reported once, after upsert, deliberately before `end_call` — so a subclass that flips
+        a "done" UI state on `end_call` never observes a done call with no summary attached."""
 
     def end_call(self, error: str | None = None) -> None:
         pass
@@ -78,8 +66,7 @@ class GraphReporter:
 
 @dataclass
 class GraphMergeContext:
-    """The values every call in a merge run shares — bundled so functions take one param
-    instead of company_name/settings/model_params/reporter separately each time."""
+    """The values every call in a merge run shares."""
 
     company_name: str
     settings: Settings
@@ -96,9 +83,8 @@ async def _resolve_names(
 ) -> dict[str, ResolvedName]:
     """One LLM call for the entities the deterministic pass couldn't settle: returns
     {article_entity_name: ResolvedName(canonical_name, method="llm")} for each. `method` is
-    always "llm" here even when the model decides an entity is new (canonical == article's own
-    name) — it's still a model judgment call, worth distinguishing later from a match nobody ever
-    had to reason about (see ResolvedName's docstring)."""
+    "llm" even when the model decides an entity is new — still a judgment call, worth
+    distinguishing from a match nobody had to reason about."""
     model_params = {**ctx.model_params, "max_tokens": ctx.settings.graph_max_tokens}
     ctx.reporter.start_call(label=article_title, model=model_params["model"])
     kinds = {e["name"]: e for e in article_entities}
@@ -108,8 +94,6 @@ async def _resolve_names(
                 "name": name,
                 "kind": kinds.get(name, {}).get("kind"),
                 "domain": kinds.get(name, {}).get("domain"),
-                # Most load-bearing for a generic name like "new microservice" — kind/domain alone
-                # rarely distinguish it from an unrelated system with the same generic phrasing.
                 "description": kinds.get(name, {}).get("description"),
             }
             for name in unresolved
@@ -142,18 +126,15 @@ async def _resolve_names(
     except Exception as exc:
         ctx.reporter.end_call(error=str(exc))
         raise
-    # Not `ctx.reporter.end_call()` here: the call's real work (resolving names) is done, but
-    # `_merge_article` still has to upsert entities/relationships and report a summary before this
-    # call should read as finished — see report_summary's docstring.
-
+    # Not `ctx.reporter.end_call()` here: _merge_article still upserts and reports a summary
+    # before this call should read as finished — see report_summary's docstring.
     try:
         parsed = ResolutionResponse.model_validate(
             repair_json(raw, return_objects=True)
         )
     except ValidationError:
-        # A malformed merge response must not abort the run: leaving the mapping empty means every
-        # unresolved entity keeps the article's own name, i.e. is treated as new. That over-counts
-        # entities rather than corrupting existing ones, and a later re-merge can still fold them.
+        # Must not abort the run: an empty mapping treats every unresolved entity as new, which
+        # over-counts rather than corrupting existing ones, and a later re-merge can still fold them.
         logger.warning("merge response failed validation for %r; treating all as new", article_title)
         return {}
 
@@ -180,10 +161,8 @@ async def _merge_article(
         [e["name"] for e in entities],
         threshold=ctx.settings.graph_fuzzy_threshold,
     )
-    # A call card only exists in the dashboard's merge history when a call actually happened —
-    # an article that resolves entirely deterministically stays invisible there, same as before
-    # this call ever reported a summary. `had_call` gates report_summary/end_call below so that
-    # stays true.
+    # Gates report_summary/end_call below so a fully-deterministic article stays invisible in
+    # the dashboard's merge history, same as before it had summaries at all.
     had_call = bool(unresolved)
     if unresolved:
         llm_mapping = await _resolve_names(
@@ -195,8 +174,8 @@ async def _merge_article(
             article.title or article.source_url,
             ctx,
         )
-        # Deterministic matches win: they are exact/near-exact string evidence, and letting the
-        # model reassign a name it was never asked about would silently undo them.
+        # Deterministic matches win — letting the model reassign a name it was never asked about
+        # would silently undo them.
         mapping = {**llm_mapping, **mapping}
     else:
         logger.debug(
@@ -205,9 +184,7 @@ async def _merge_article(
             article.id,
         )
 
-    # Snapshot before upserting so "new" means new-to-the-graph-as-of-this-article, not
-    # new-to-this-entity-loop — a name introduced earlier in this same article's entity list
-    # still only counts once.
+    # Snapshot before upserting so "new" means new-to-the-graph, not new within this loop.
     known_before = set(known.names)
     new_count = 0
     matched_count = 0
@@ -228,14 +205,10 @@ async def _merge_article(
             entity.get("kind", "service"),
             entity.get("domain", "Other"),
             alias=name if canonical_name != name else None,
-            # Only meaningful alongside a real alias: a resolved-but-unchanged name (LLM said
-            # "new") or a missing mapping (malformed merge response) both leave canonical == name,
-            # so alias is already None above and there is no decision to record.
             alias_method=resolved.method if resolved and canonical_name != name else None,
             first_seen_article_id=article.id,
             description=entity.get("description"),
         )
-        # So the next article in this run sees it too, without a re-fetch from the DB.
         known.add(canonical_name)
 
     def _canonical(name: str) -> str:
@@ -255,11 +228,8 @@ async def _merge_article(
             relation_phrase=rel.get("relation_phrase"),
         )
         if rel["relation"] == "replaced_by":
-            # source_name is the system this article says was replaced by target_name — its own
-            # outgoing edges (calls/writes_to/...) describe behavior that stopped once it was
-            # decommissioned, so close their validity window (see db/relationships.py's
-            # invalidate_outgoing). The replaced_by fact itself, and anything pointing *at*
-            # source_name, stays valid — those remain historically true regardless.
+            # source_name was decommissioned; close its outgoing edges' validity window (see
+            # db/relationships.py's invalidate_outgoing). Edges pointing *at* it stay valid.
             db.invalidate_outgoing_relationships(
                 ctx.company_name,
                 source_name,
@@ -285,14 +255,11 @@ async def run_graph_merge(
     company_name: str,
     reporter: GraphReporter | None = None,
 ) -> dict[str, int]:
-    """Fold company_name's not-yet-merged extracted articles into the entity graph, one at a
-    time (each merge call is shown entity names resolved by prior articles earlier in this run,
-    so this runs sequentially, not concurrently). Already-merged articles are left untouched —
-    safe to call repeatedly as new articles get extracted, without re-deciding settled names.
-    Returns the company's total entity/relationship counts after this run (not just what this
-    run touched) plus how many articles this run processed. Raises RuntimeError if company_name
-    has no extracted articles at all; articles_merged is 0 if all extracted articles are already
-    merged (nothing new to do)."""
+    """Fold company_name's not-yet-merged extracted articles into the entity graph, one at a time
+    — sequential, since each call needs to see names resolved by prior articles this run. Returns
+    total entity/relationship counts after the run plus how many articles were processed. Raises
+    RuntimeError if company_name has no extracted articles at all; articles_merged is 0 if
+    everything's already merged."""
     if not db.fetch_extracted(company_name):
         raise RuntimeError(f"no extracted articles found for {company_name!r}")
 

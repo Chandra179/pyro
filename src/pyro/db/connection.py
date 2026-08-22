@@ -1,14 +1,8 @@
 """Connecting to ArangoDB and bringing the schema up to date.
 
-Two things live here that used to be inlined in `Database.__init__`:
-
-1. The schema itself (which collections exist, which are edge collections, which indexes back
-   which query) as declarative data rather than a sequence of imperative calls.
-2. A guard so that work happens *once per process* instead of once per connection. The old code
-   ran `has_database` + 3x `has_collection` + 5x `add_index` on every `open_db()`, and the
-   dashboard opened one connection per read accessor — so a single `/data/panel` request, which
-   polls every 4 seconds, cost three full bootstraps and fifteen index round-trips before it read
-   a byte of data.
+Bootstrapping (has_database/has_collection/add_index) is guarded to run once per process, not
+once per connection — the dashboard opens one connection per read accessor, and a naive version
+of this cost a full bootstrap on every poll.
 """
 
 from __future__ import annotations
@@ -25,8 +19,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class ConnectionParams:
-    """Everything that identifies one physical connection + schema. Frozen and hashable so it can
-    key the process-wide caches below."""
+    """Identifies one physical connection + schema; frozen/hashable to key the caches below."""
 
     host: str
     database: str
@@ -38,9 +31,8 @@ class ConnectionParams:
     jobs_collection: str
 
 
-# Persistent indexes, per collection. Every read path in the repositories filters (and usually
-# sorts) on one of these; ArangoDB's index-create API is idempotent for an identical
-# type+fields+name, so re-running the whole set is safe on existing deployments.
+# ArangoDB's index-create API is idempotent for an identical type+fields+name, so re-running the
+# whole set on every bootstrap is safe.
 _ARTICLE_INDEXES = [
     {"type": "persistent", "fields": ["company_name"], "name": "idx_articles_company_name"},
     {
@@ -53,16 +45,13 @@ _ARTICLE_INDEXES = [
         "fields": ["company_name", "graph_merged_at"],
         "name": "idx_articles_company_name_graph_merged_at",
     },
-    # Backs fetch_unprocessed's stage filters, which previously had no index at all and fell back
-    # to a full collection scan on every clean/extract run.
+    # Backs fetch_unprocessed's stage filters.
     {
         "type": "persistent",
         "fields": ["company_name", "cleaned_text"],
         "name": "idx_articles_company_name_cleaned_text",
     },
-    # Backs list_summaries' paginated, newest-first read (the dashboard's extraction table) —
-    # without this, LIMIT with an offset still has to scan and sort every one of the company's
-    # articles before it can return one page.
+    # Backs list_summaries' paginated newest-first read.
     {
         "type": "persistent",
         "fields": ["company_name", "scraped_at"],
@@ -80,8 +69,7 @@ _RELATIONSHIP_INDEXES = [
         "fields": ["company_name"],
         "name": "idx_relationships_company_name",
     },
-    # Backs invalidate_outgoing (graph/merge.py, on a `replaced_by` edge): closing the validity
-    # window on every edge sourced from a decommissioned entity, without a full company-wide scan.
+    # Backs invalidate_outgoing (graph/merge.py, on a `replaced_by` edge).
     {
         "type": "persistent",
         "fields": ["company_name", "source_key"],
@@ -90,7 +78,6 @@ _RELATIONSHIP_INDEXES = [
 ]
 
 _JOB_INDEXES = [
-    # Backs list_recent's ORDER — the Runs page and startup hydration both want newest-first.
     {"type": "persistent", "fields": ["created_at"], "name": "idx_jobs_created_at"},
 ]
 
@@ -100,8 +87,7 @@ _MIGRATION_HINT = (
     "collection (drop and let it be re-bootstrapped, migrating any existing data by hand first)."
 )
 
-# Guards the caches below: job threads (api/jobs.py) and request threads can both reach for a
-# connection at the same time, and bootstrapping twice concurrently is wasteful, not just untidy.
+# Guards the caches below against concurrent bootstrap from job/request threads racing for a connection.
 _lock = threading.Lock()
 _clients: dict[str, ArangoClient] = {}
 _databases: dict[ConnectionParams, StandardDatabase] = {}
@@ -134,12 +120,9 @@ def _bootstrap(db: StandardDatabase, params: ConnectionParams) -> None:
     _ensure_collection(
         db, params.entities_collection, edge=False, indexes=_ENTITY_INDEXES
     )
-    # Edge collection: relationships carry `_from`/`_to` document handles into the entities
-    # collection, which is what makes AQL graph traversals (OUTBOUND/INBOUND/ANY, shortest path,
-    # k-hop neighborhoods) possible over the stored graph. Note ArangoDB does not enforce that
-    # the referenced documents exist — an edge whose endpoint entity is missing is stored fine and
-    # simply yields nothing when traversed, which is the behavior we want given endpoints come
-    # from LLM output that occasionally names a system it didn't list as an entity.
+    # Edge collection so relationships (`_from`/`_to`) are AQL-traversable. ArangoDB doesn't
+    # enforce that endpoints exist — a dangling edge just yields nothing when traversed, which is
+    # fine since LLM output occasionally names an endpoint it didn't also list as an entity.
     _ensure_collection(
         db, params.relationships_collection, edge=True, indexes=_RELATIONSHIP_INDEXES
     )
@@ -147,12 +130,7 @@ def _bootstrap(db: StandardDatabase, params: ConnectionParams) -> None:
 
 
 def connect(params: ConnectionParams) -> StandardDatabase:
-    """Return the process-wide connection for `params`, creating the database and bringing the
-    schema up to date the first time it's asked for.
-
-    python-arango's database handle is a thin wrapper over a connection pool and is safe to share,
-    so callers get the same object rather than a fresh bootstrap each time.
-    """
+    """Return the process-wide connection for `params`, bootstrapping the schema on first use."""
     with _lock:
         existing = _databases.get(params)
         if existing is not None:
@@ -173,8 +151,7 @@ def connect(params: ConnectionParams) -> StandardDatabase:
 
 
 def reset_cache() -> None:
-    """Drop cached connections — for tests, and for any caller that has changed credentials
-    mid-process."""
+    """Drop cached connections — for tests and credential changes mid-process."""
     with _lock:
         _databases.clear()
         _bootstrapped.clear()

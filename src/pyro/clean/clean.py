@@ -19,10 +19,7 @@ def clean_html(
 ) -> str:
     """Strip nav/boilerplate, collapse large code blocks, return normalized article text.
 
-    Main-content extraction is delegated to trafilatura (handles arbitrary blog
-    markup far more robustly than a fixed tag/selector blocklist). Falls back to
-    the raw document when trafilatura can't confidently isolate an article body
-    (e.g. very short fixture/test pages).
+    Falls back to the raw document when trafilatura can't isolate an article body.
     """
     extracted = trafilatura.extract(
         raw_html,
@@ -50,8 +47,7 @@ def clean_html(
 
 
 def _collapse_code_blocks(root: Tag, line_threshold: int) -> None:
-    # Only the outermost <pre> in a nesting chain — trafilatura's HTML output can
-    # nest <pre><pre>...</pre></pre> for a single code block.
+    # trafilatura can nest <pre><pre>...</pre></pre> for one code block; only handle the outermost.
     for pre in root.find_all("pre"):
         if pre.find_parent("pre") is not None:
             continue

@@ -57,10 +57,8 @@ class ArticleRepository:
         return self._col.has(id)
 
     def mark_cleaned(self, id: str, cleaned_text: str) -> None:
-        """raw_html is cleared here: it's only ever read by the clean stage itself (see
-        _STAGE_FILTERS), so once cleaned_text exists there's no further use for it and it's the
-        largest field on the document. The "clean" stage filter still works after this — its
-        raw_html != null clause only matters while cleaned_text is still null."""
+        # raw_html is the largest field and unused once cleaned; clearing it here is safe since
+        # the "clean" stage filter's raw_html != null clause only matters while cleaned_text is null.
         self._col.update({"_key": id, "cleaned_text": cleaned_text, "raw_html": None})
 
     def mark_extracted(self, id: str, extracted_graph: dict) -> None:
@@ -69,8 +67,6 @@ class ArticleRepository:
         )
 
     def mark_graph_merged(self, id: str) -> None:
-        """Record that an article's extracted entities/relationships have been folded into the
-        company's graph, so run_graph_merge skips it on future runs instead of re-merging it."""
         self._col.update({"_key": id, "graph_merged_at": now_iso()})
 
     # --- reads ---
@@ -83,10 +79,8 @@ class ArticleRepository:
     ) -> list[Article]:
         """Articles still awaiting `stage` ('clean' or 'extract').
 
-        `company_name` scopes the batch. It is optional for backwards compatibility with the CLI's
-        whole-database `pyro clean` / `pyro extract`, but callers running on behalf of one company
-        should always pass it: two concurrent dashboard jobs otherwise pick up each other's
-        articles, since these stages match purely on which fields are null.
+        Pass company_name when running on behalf of one company — otherwise two concurrent
+        jobs can pick up each other's articles, since stages match purely on null fields.
         """
         if stage not in _STAGE_FILTERS:
             raise ValueError(f"unknown stage: {stage}")
@@ -116,8 +110,7 @@ class ArticleRepository:
         ]
 
     def fetch_pending_merge(self, company_name: str) -> list[Article]:
-        """Extracted articles for company_name not yet folded into the graph, oldest first (so
-        a merge run processes articles in the order they were extracted)."""
+        """Extracted articles for company_name not yet folded into the graph, oldest first."""
         query = """
         FOR doc IN @@col
           FILTER doc.company_name == @company_name
@@ -133,16 +126,9 @@ class ArticleRepository:
     def list_summaries(
         self, company_name: str, limit: int, offset: int
     ) -> tuple[list[dict], int]:
-        """One page of lightweight article rows for the dashboard's extraction table
-        (dashboard/templates/partials/_panel_extraction.html), plus the total matching count for
-        pagination controls.
-
-        Projects down to just what that table renders — title/url/stage/entity-count/timestamp —
-        rather than returning full Article documents. That panel polls this every 4 seconds; a
-        full Article carries `cleaned_text` (often the entire post body) and the whole
-        `extracted_graph` JSON blob, neither of which the table displays. `list_articles` below is
-        still used where a caller actually needs the full document (e.g. the article preview
-        modal, via get_for_company)."""
+        """One page of lightweight article rows for the dashboard's extraction table, plus total
+        count for pagination. Projects down to what the table renders, skipping `cleaned_text`
+        and `extracted_graph` since the panel polls this every 4 seconds."""
         query = """
         FOR doc IN @@col
           FILTER doc.company_name == @company_name
@@ -176,10 +162,8 @@ class ArticleRepository:
         return rows, (total[0] if total else 0)
 
     def list_articles(self, company_name: str) -> list[Article]:
-        """All articles for a company regardless of pipeline stage, newest scrape first.
-        Used by the dashboard's live extraction view, which polls this every 4s — `raw_html` is
-        dropped from the projection since the view never renders it (only the clean stage reads
-        it, via fetch_unprocessed), and it's by far the largest field on the document."""
+        """All articles for a company, newest scrape first. Drops `raw_html` — the largest field,
+        never rendered by the polling dashboard view that calls this."""
         query = """
         FOR doc IN @@col
           FILTER doc.company_name == @company_name
@@ -191,17 +175,14 @@ class ArticleRepository:
         ]
 
     def get_for_company(self, company_name: str, article_id: str) -> Article | None:
-        """Article ids are unique on their own, but this also checks company ownership so one
-        company's dashboard view can't fetch another's article by key."""
+        """Checks company ownership so one company's dashboard view can't fetch another's article."""
         doc = self._col.get(article_id)
         if doc is None or doc.get("company_name") != company_name:
             return None
         return Article.from_doc(doc)
 
     def list_companies_with_pending_merge(self) -> list[str]:
-        """Distinct company_names with at least one extracted article that hasn't been folded
-        into the graph yet, for a cron job to pick up instead of a person clicking "Run merge".
-        """
+        """Distinct company_names with at least one extracted, unmerged article."""
         query = """
         FOR doc IN @@col
           FILTER doc.extracted_at != null AND doc.graph_merged_at == null
@@ -230,8 +211,7 @@ class ArticleRepository:
         self._query(query, company_name=company_name)
 
     def reset_graph_merged(self, company_name: str) -> None:
-        """Clear graph_merged_at for a company so the next merge run treats every extracted
-        article as new — see Database.delete_graph_for_company."""
+        """Clear graph_merged_at so the next merge run treats every extracted article as new."""
         query = """
         FOR doc IN @@col
           FILTER doc.company_name == @company_name AND doc.graph_merged_at != null

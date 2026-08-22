@@ -1,11 +1,4 @@
-"""`Database` — the facade every caller talks to.
-
-It owns no query logic of its own; it composes the three repositories and exposes their methods
-under the names the rest of the codebase already uses. The split exists because the article
-pipeline and the entity graph are separate concerns that happened to share a file: the graph side
-is the one growing traversals, and it no longer drags the scrape/clean/extract state along with
-it. The facade is what keeps that split from rippling into every call site.
-"""
+"""`Database` — the facade every caller talks to; composes the repositories, owns no query logic."""
 
 from __future__ import annotations
 
@@ -49,9 +42,7 @@ class Database:
         )
         self.jobs = JobRepository(self._db, jobs_collection)
 
-    # The underlying connection is process-wide and pooled (see db.connection), so an individual
-    # Database has no resources to release. Kept so `with open_db(...)` reads naturally and so a
-    # future connection-per-caller model has somewhere to hook.
+    # No-op: the connection is process-wide and pooled. Kept so `with open_db(...)` reads naturally.
     def close(self) -> None:
         pass
 
@@ -112,9 +103,8 @@ class Database:
         return self.articles.list_companies_with_pending_merge()
 
     def list_company_names(self) -> list[str]:
-        """Distinct company names seen across articles and entities, for the dashboard's company
-        picker. Unioned in Python rather than with AQL's UNION_DISTINCT so each side uses its own
-        company_name index instead of the server materializing both full scans first."""
+        """Distinct company names across articles and entities. Unioned in Python rather than
+        AQL's UNION_DISTINCT so each side uses its own company_name index."""
         names = set(self.articles.list_company_names())
         names.update(self.entities.list_company_names())
         return sorted(n for n in names if n)
@@ -186,10 +176,8 @@ class Database:
         return self.relationships.list_all(company_name)
 
     def delete_graph_for_company(self, company_name: str) -> None:
-        """Deletes all entities/relationships for company_name and resets every one of its
-        articles' graph_merged_at, so a subsequent merge run treats them as new and rebuilds
-        from scratch — the supported way to force a full graph rebuild (e.g. after changing the
-        merge prompt), since run_graph_merge itself only processes not-yet-merged articles."""
+        """Deletes all entities/relationships for company_name and resets graph_merged_at on its
+        articles, so the next merge run rebuilds from scratch."""
         self.articles.reset_graph_merged(company_name)
         self.relationships.delete_for_company(company_name)
         self.entities.delete_for_company(company_name)

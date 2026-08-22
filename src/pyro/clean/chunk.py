@@ -17,11 +17,7 @@ def chunk_text(
     token_threshold: int = 8000,
     overlap_tokens: int = 500,
 ) -> list[str]:
-    """Split text into overlapping chunks if it exceeds token_threshold.
-
-    Returns [text] unchanged when under the threshold. Splits/measures using
-    real tiktoken token counts rather than a char-count heuristic.
-    """
+    """Split text into overlapping chunks if it exceeds token_threshold, else return [text]."""
     tokens = _encoding.encode(text)
     if len(tokens) <= token_threshold:
         return [text]

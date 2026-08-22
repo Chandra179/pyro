@@ -1,17 +1,10 @@
 """Backfill for graphs merged before `relation` became a controlled vocabulary.
 
-Edges stored under the old free-text scheme carry whatever the model happened to say — "sends
-requests to", "makes downstream calls to", "calls" — and because Database.upsert_relationship keys
-on the relation, synonyms describing one connection were stored as several distinct edges and drawn
-as several distinct arrows.
+`canonicalize_relations` rewrites old free-text edges onto extract.schema.RelationKind, using the
+same normalizer new extractions go through. Synonym edges converge onto one key and collapse into
+one edge; the model's original wording is kept in `relation_phrase`.
 
-`canonicalize_relations` rewrites those edges onto extract.schema.RelationKind, using the same
-normalizer new extractions go through. Edges that were only ever synonyms of each other converge on
-one key and therefore collapse into one edge — the duplicates disappear rather than being counted
-twice. The model's original wording is kept in `relation_phrase`, so nothing is discarded.
-
-This is a one-off: once run, and with the vocabulary enforced at extraction time, later merges stay
-canonical on their own.
+One-off: with the vocabulary enforced at extraction time, later merges stay canonical on their own.
 """
 
 from __future__ import annotations
@@ -39,10 +32,8 @@ def canonicalize_relations(db: Database, company_name: str) -> dict[str, int]:
 
     for edge in edges:
         stored = edge.get("relation") or ""
-        # Normalize from the *original* wording when we have it. That makes this command
-        # re-runnable and self-correcting: an edge already folded into `depends_on` by an earlier
-        # run keeps its phrase, so extending the synonym table and running again reclassifies it,
-        # instead of the run short-circuiting on an already-canonical value.
+        # Normalize from the *original* wording so extending the synonym table and re-running
+        # can reclassify an edge already folded into the fallback, instead of short-circuiting.
         original = edge.get("relation_phrase") or stored
         canonical = normalize_relation(original)
         if canonical == stored:
@@ -63,11 +54,7 @@ def canonicalize_relations(db: Database, company_name: str) -> dict[str, int]:
             canonical,
             edge.get("as_of"),
             edge.get("source_article_id"),
-            # Don't overwrite a phrase that's already there with the same thing twice; otherwise
-            # record what the edge used to say so the rewrite stays inspectable.
             relation_phrase=edge.get("relation_phrase") or old_relation,
-            # This edge is moving to a new key (its relation changed), so carry over every article
-            # that ever confirmed it under the old key instead of collapsing back down to one id.
             extra_source_article_ids=edge.get("source_article_ids"),
         )
         written.add(new_key)

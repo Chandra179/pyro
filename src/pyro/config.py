@@ -19,25 +19,18 @@ class RouterConfig(BaseModel):
     num_retries: int = 2
     cooldown_time: int = 30
     allowed_fails: int = 1
-    # Per-request cap so a hung/slow model raises a timeout exception instead
-    # of blocking forever — needed for num_retries/cooldown fallback to ever
-    # trigger on a stall (only raised exceptions advance the cascade).
+    # Cap so a hung/slow model raises instead of blocking forever — only raised exceptions
+    # advance the cascade, so a stall would otherwise never trigger fallback.
     timeout: float = 60.0
     stream_timeout: float = 60.0
-    # TokenRouter (api.tokenrouter.com) is an OpenAI-compatible multi-provider
-    # proxy — model IDs are its own "<provider>/<model-slug>" aliases, not raw
-    # upstream model names.
+    # TokenRouter (api.tokenrouter.com): OpenAI-compatible proxy, model IDs are its own aliases.
     tokenrouter_model: str = "deepseek/deepseek-v4-flash-0731"
     tokenrouter_api_base: str = "https://api.tokenrouter.com/v1"
-    # TokenRouter's own "-free" aliases — rotating time-boxed/capacity-limited
-    # promos (e.g. Kimi K3 was free for a stretch), not a stable free tier.
-    # Tried before the paid tokenrouter_model tier, same api_base/api_key.
+    # TokenRouter's rotating time-boxed "-free" promos, not a stable free tier.
     tokenrouter_free_models: list[str] = [
         "qwen/qwen3.8-max-free",
     ]
-    # OpenCode Zen (opencode.ai) — another OpenAI-compatible passthrough, same
-    # shape as the TokenRouter tiers above. Model IDs are OpenCode's own
-    # rotating "-free" promos (no stable free tier guaranteed long-term).
+    # OpenCode Zen (opencode.ai): another OpenAI-compatible passthrough, same shape as above.
     opencode_api_base: str = "https://opencode.ai/zen/v1"
     opencode_free_models: list[str] = [
         "big-pickle",
@@ -53,10 +46,8 @@ class RouterConfig(BaseModel):
     gemini_model: str = "gemini/gemini-2.5-flash"
     openai_model: str = "gpt-4o-mini"
 
-    # Some tiers (e.g. TokenRouter's throttle: "Maximum 1 requests within 1 minutes") are far
-    # tighter than num_retries/cooldown_time above, which only governs advancing to the *next*
-    # cascade tier on failure — no help when the tier that got rate-limited is the only one
-    # configured. This is a separate same-tier retry: wait it out and try again.
+    # Separate same-tier retry: num_retries/cooldown_time above only govern advancing to the
+    # *next* cascade tier, no help when the rate-limited tier is the only one configured.
     rate_limit_max_retries: int = 5
     rate_limit_wait_seconds: int = 65
 
@@ -95,12 +86,8 @@ class SitemapConfig(BaseModel):
 class PromptsConfig(BaseModel):
     """Paths (relative to the top-level prompts/ dir) for each stage's templates.
 
-    Extraction prompts live under prompts/extraction/<variant>/, e.g.
-    prompts/extraction/default/system.md — "variant" is a growable set of alternate prompt
-    styles for extraction (see pyro.prompts.list_variants). Which variant backs a given run is
-    configurable (see build_prompts_config below), which is what the dashboard uses to let a
-    run pick its extraction template. The graph-merge prompt has no variant concept (v1 is a
-    single fixed template, not user-selectable) — see prompts/merge/.
+    Extraction prompts live under prompts/extraction/<variant>/ (see pyro.prompts.list_variants) —
+    the dashboard lets a run pick its variant. The merge prompt has no variant concept.
     """
 
     extraction_system: str = "extraction/default/system.md"
@@ -119,12 +106,9 @@ class ArangoConfig(BaseModel):
 
 
 class ArticleStage(BaseModel):
-    """One step of the article pipeline (scrape -> clean -> extract -> merge), as shown in the
-    dashboard's Data page status stepper/legend (dashboard/templates/partials/_panel_extraction.html)
-    and the status badge each article row gets. `key` must match the stage strings
-    db/articles.py's list_summaries computes (doc.extracted_at/cleaned_text/graph_merged_at
-    nullness) — this is the single place that ordering/labels/colors are defined, so the
-    dashboard never hardcodes its own copy of the stage list."""
+    """One pipeline stage. `key` must match db/articles.py's list_summaries stage strings — this
+    is the single source of truth for ordering/labels/colors, so the dashboard never hardcodes
+    its own copy."""
 
     key: str
     label: str
@@ -167,68 +151,47 @@ class Settings(BaseSettings):
     tokenrouter_api_key: str | None = None
     opencode_api_key: str | None = None
 
-    # ArangoDB connection credentials — non-secret connection shape (host,
-    # database/collection names) lives in ArangoConfig below.
     arango_username: str = "root"
     arango_password: str | None = None
 
-    # Extraction (Pass 1) concurrency — kept low enough to stay under a free tier's typical
-    # ~20 RPM ceiling given real-world call latency. (A separate `extraction_rpm_limit` field
-    # used to sit next to this one to document that reasoning, but nothing ever read it — a
-    # concurrency cap, not a request-rate cap, is what's actually enforced, by the Semaphore in
-    # extract/pipeline.py's run_extraction. Removed rather than left as a misleading no-op.)
+    # Kept low enough to stay under a free tier's typical ~20 RPM ceiling given real call latency.
     extraction_concurrency: int = 5
 
-    # How many dashboard pipeline jobs (api/jobs.py's scrape->clean->extract->merge-graph runs)
-    # may be actively running at once, across all companies. Each job does Playwright-rendered
-    # scraping (CPU/memory heavy) and drives the same LLM cascade every other job and company
-    # shares — with no cap, bulk-submitting several companies' jobs at once means all of them
-    # contend for both at full force simultaneously, with only reactive rate-limit retry as a
-    # backstop. A submitted job beyond this cap waits (status stays "pending") rather than
-    # running immediately; see api/jobs.py's `_JOB_SLOTS`.
+    # Cap on concurrently running dashboard pipeline jobs across all companies — each does
+    # Playwright scraping (CPU/memory heavy) and shares the same LLM cascade, so uncapped
+    # bulk-submission would have them all contend at once. A job beyond this cap waits
+    # ("pending") rather than running; see api/jobs.py's `_JOB_SLOTS`.
     max_concurrent_jobs: int = 3
 
-    # Decoding controls for extraction calls. Free-tier models are the most prone to
-    # repetition-loop collapse — a low temperature plus a frequency penalty discourages
-    # the model from reusing a token it's already emitted.
+    # Free-tier models are prone to repetition-loop collapse; low temperature + frequency
+    # penalty discourages reusing an already-emitted token.
     extraction_temperature: float = 0.3
     extraction_frequency_penalty: float = 0.4
-    # Fallback output cap, used only for cascade tiers whose model litellm doesn't
-    # recognize (see router._max_tokens_for) — known models get their own real limit.
+    # Fallback cap for cascade tiers litellm doesn't recognize; known models get their own limit.
     extraction_max_tokens: int = 2000
 
-    # Chunking for outlier posts.
     chunk_token_threshold: int = 8000
     chunk_overlap_tokens: int = 500
-
-    # Code block collapsing.
     code_block_line_threshold: int = 15
 
-    # Graph-merge pass: reconciles each article's extracted entities/relationships against the
-    # company's entity graph so far. Single fixed high-capability model (same reasoning as the
-    # old synthesis_model), not part of the extraction cascade.
+    # Single fixed high-capability model, not part of the extraction cascade.
     graph_model: str = "openrouter/nvidia/nemotron-3-super-120b-a12b:free"
     graph_max_tokens: int = 8000
-    # Temporary cap on articles merged per run, for cheap test runs.
     graph_article_limit: int | None = None
-    # Minimum rapidfuzz token_sort_ratio (0-100) for the deterministic pre-pass to treat an
-    # article's entity name as the same system as an existing one without asking the model. High
-    # by design: a false merge silently fuses two real systems into one node and is much harder to
-    # notice than a missed merge, which the LLM tier still catches. See graph/resolve.py.
+    # rapidfuzz token_sort_ratio (0-100) threshold for the deterministic pre-pass. High by
+    # design: a false merge silently fuses two real systems and is harder to notice than a
+    # missed merge, which the LLM tier still catches. See graph/resolve.py.
     graph_fuzzy_threshold: int = 92
-    # Cap on how many existing entity names the merge prompt is shown. Below this count every
-    # name is included; above it, only the names most similar to the unresolved entities, so
-    # prompt size stays flat as a company's graph grows. None disables the cap.
+    # Cap on existing entity names shown to the merge prompt (nearest by similarity once
+    # exceeded), so prompt size stays flat as a company's graph grows. None disables the cap.
     graph_candidate_names_limit: int | None = 40
 
-    # How many companies `merge-graph-pending` (cron/merge_pending.sh) processes at once. Each
-    # company's own merge is already safely serialized by cli.py's per-company _MERGE_LOCKS —
-    # running several *different* companies' merges concurrently doesn't touch that invariant,
-    # just the wall-clock time one cron tick takes as company count grows.
+    # Companies processed at once by merge-graph-pending; each company's own merge is still
+    # serialized by cli.py's _MERGE_LOCKS.
     merge_pending_concurrency: int = 3
 
-    # Fixed domain taxonomy, tagged on extracted entities/relationships — kept as a shared axis
-    # for a future cross-company comparison feature, not used to classify/group anymore.
+    # Fixed taxonomy tagged on extracted entities/relationships; kept for a future
+    # cross-company comparison feature, not used to classify/group today.
     domains: list[str] = [
         "Authentication",
         "Recommendation Engine",
@@ -241,8 +204,6 @@ class Settings(BaseSettings):
         "Other",
     ]
 
-    # Ordered article pipeline stages — see ArticleStage above for why this is the single source
-    # of truth for the dashboard's stage badges/legend.
     article_stages: list[ArticleStage] = [
         ArticleStage(key="scraped", label="Scraped", variant="neutral"),
         ArticleStage(key="cleaned", label="Cleaned", variant="amber"),
@@ -266,9 +227,7 @@ class Settings(BaseSettings):
         dotenv_settings: PydanticBaseSettingsSource,
         file_secret_settings: PydanticBaseSettingsSource,
     ) -> tuple[PydanticBaseSettingsSource, ...]:
-        # Priority, highest first: init kwargs (e.g. Settings(**overrides) from
-        # run_pipeline.py) > env/.env > config/config.yaml (checked-in
-        # defaults) > hardcoded field defaults above.
+        # Priority, highest first: init kwargs > env/.env > config.yaml > field defaults.
         return (
             init_settings,
             env_settings,
@@ -280,12 +239,8 @@ class Settings(BaseSettings):
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
-    """The process-wide Settings instance.
+    """The process-wide Settings instance, cached since constructing one re-reads disk.
 
-    Cached because constructing one re-reads both `.env` and `config/config.yaml` off disk. The
-    dashboard used to build a fresh Settings inside every read accessor, so a single `/data/panel`
-    request — which polls every 4 seconds — did that three times over. Anything that wants
-    per-call overrides (run_pipeline.py, api/jobs.py picking a prompt variant) constructs
-    `Settings(...)` directly and is unaffected by this cache.
+    Callers needing per-call overrides construct `Settings(...)` directly instead.
     """
     return Settings()

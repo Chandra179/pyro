@@ -23,12 +23,9 @@ logging.basicConfig(level=logging.INFO)
 
 app = typer.Typer(help="Engineering blog architecture-graph pipeline")
 
-# Each pipeline stage has a plain `_impl` function taking an optional `Settings` override, and a
-# thin `@app.command()` wrapper with no `settings` param — typer can't build a CLI parser for the
-# Settings type, so it must never appear in a typer-decorated function's signature. Programmatic
-# callers (run_pipeline.py, run_all below, and api/jobs.py's background job runner) call the
-# `_impl` functions directly — the underscore marks "not a typer command," not "private to this
-# module"; these are the real internal API other packages are meant to call.
+# Each stage has a plain `_impl` fn plus a typer `@app.command()` wrapper with no `settings` param
+# (typer can't parse a Settings-typed CLI arg). Programmatic callers call `_impl` directly — the
+# underscore means "not a typer command," not "private."
 
 
 def _scrape_impl(
@@ -76,9 +73,10 @@ def _clean_impl(
     settings: Settings | None = None,
     company_name: str | None = None,
 ) -> None:
-    """Strip boilerplate and collapse code blocks for un-cleaned articles. Scoped to
-    `company_name` when given — callers running one company's pipeline should pass it so
-    concurrent runs don't consume each other's articles."""
+    """Strip boilerplate and collapse code blocks for un-cleaned articles.
+
+    Pass company_name so concurrent runs don't consume each other's articles.
+    """
     settings = settings or Settings()
     with open_db_from_settings(settings) as database:
         articles = database.fetch_unprocessed(
@@ -106,8 +104,7 @@ def _extract_impl(
     settings: Settings | None = None,
     company_name: str | None = None,
 ) -> None:
-    """Run LLM extraction (entity/relationship graph) on cleaned, unextracted articles, optionally
-    scoped to one company."""
+    """Run LLM extraction on cleaned, unextracted articles, optionally scoped to one company."""
     settings = settings or Settings()
     with open_db_from_settings(settings) as database:
         count = asyncio.run(
@@ -129,11 +126,8 @@ class GraphMergeInProgress(Exception):
     """Raised when a graph merge is already running for this company_name."""
 
 
-# One lock per company_name, shared by every caller of _merge_graph_impl (the full
-# scrape->clean->extract->merge-graph job in api/jobs.py and the dashboard's standalone
-# "Run merge" button both funnel through here). Guarding at this choke point — rather than in
-# each caller separately — is what makes it impossible for two merge runs to race on the same
-# company's entity graph, regardless of which entry point triggered them.
+# One lock per company_name, shared by every caller of _merge_graph_impl — the single choke point
+# that makes it impossible for two merge runs to race on the same company's entity graph.
 _MERGE_LOCKS: dict[str, threading.Lock] = defaultdict(threading.Lock)
 
 
@@ -142,10 +136,10 @@ def _merge_graph_impl(
     settings: Settings | None = None,
     reporter: GraphReporter | None = None,
 ) -> None:
-    """Fold company_name's not-yet-merged extracted articles into its entity graph and persist
-    to ArangoDB. Raises GraphMergeInProgress instead of running if a merge is already in flight
-    for this company_name. `reporter` (default no-op) is streamed each merge call's output as it
-    arrives — see api/jobs.py for the dashboard's use of it."""
+    """Fold company_name's not-yet-merged extracted articles into its entity graph.
+
+    Raises GraphMergeInProgress if a merge is already in flight for this company_name.
+    """
     lock = _MERGE_LOCKS[company_name]
     if not lock.acquire(blocking=False):
         raise GraphMergeInProgress(company_name)
@@ -173,18 +167,14 @@ def merge_graph(company_name: str = typer.Option(...)) -> None:
 
 
 def _merge_graph_pending_impl(settings: Settings | None = None) -> None:
-    """Run merge-graph for every company that has at least one unmerged extracted article. Meant
-    to be invoked on a schedule (see cron/) as a replacement for the dashboard's manual "Run
-    merge" button — safe to call repeatedly since run_graph_merge is incremental/idempotent (a
-    company with nothing new to merge is a fast no-op, not a full rebuild). Skips a company
-    outright if GraphMergeInProgress (e.g. a pipeline job already running for it) rather than
-    failing the whole batch.
+    """Run merge-graph for every company with at least one unmerged extracted article.
 
-    Companies run up to `settings.merge_pending_concurrency` at a time, not one after another —
-    each company's own merge is already serialized correctly by `_MERGE_LOCKS`, so concurrent
-    *different* companies never touches that invariant. Sequential-only becomes a real problem as
-    company count grows: one cron tick's wall-clock time would otherwise scale linearly with how
-    many companies exist, and can eventually exceed the schedule interval (see cron/README.md)."""
+    Safe to call repeatedly (idempotent, no-op if nothing pending). Skips a company on
+    GraphMergeInProgress rather than failing the whole batch. Runs up to
+    `settings.merge_pending_concurrency` companies at once — each company's own merge is
+    still serialized by `_MERGE_LOCKS`, so this keeps cron tick time from scaling linearly
+    with company count.
+    """
     settings = settings or Settings()
     with open_db_from_settings(settings) as database:
         companies = database.list_companies_with_pending_merge()

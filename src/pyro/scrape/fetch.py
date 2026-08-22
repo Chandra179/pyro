@@ -20,8 +20,7 @@ _DEFAULT_SCRAPE_CONFIG = ScrapeConfig()
 
 
 class _ChallengePageError(Exception):
-    """Raised when a fetched page looks like a bot-detection challenge, so the
-    same retry loop that handles network errors also retries these."""
+    """A fetched page looks like a bot-detection challenge; reuses the network-error retry loop."""
 
 
 async def _fetch_page_once(

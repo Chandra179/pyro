@@ -32,11 +32,9 @@ def _log_rate_limit_retry(settings: Settings, retry_state) -> None:
 async def call_with_rate_limit_retry(
     fn: Callable[[], Awaitable[T]], settings: Settings
 ) -> T:
-    """Retry fn() (one acompletion call) on RateLimitError, waiting router.rate_limit_wait_seconds
-    between attempts. Needed because a provider-level throttle (e.g. TokenRouter's "Maximum 1
-    requests within 1 minutes") can be far tighter than the cascade's own num_retries/cooldown_time,
-    which only governs advancing to the *next* tier — no help when the rate-limited tier is the
-    only one configured."""
+    """Retry fn() on RateLimitError, waiting router.rate_limit_wait_seconds between attempts —
+    needed since a provider-level throttle can be far tighter than the cascade's own
+    num_retries/cooldown_time, which only governs advancing to the *next* tier."""
     async for attempt in AsyncRetrying(
         stop=stop_after_attempt(settings.router.rate_limit_max_retries),
         wait=wait_fixed(settings.router.rate_limit_wait_seconds),
@@ -55,12 +53,10 @@ async def stream_with_rate_limit_retry(
     on_chunk: Callable[[str, str], None],
 ) -> tuple[str, str]:
     """Streaming sibling of call_with_rate_limit_retry: fn() must return an acompletion(...,
-    stream=True) call. Calls on_chunk(content_piece, reasoning_piece) as each chunk arrives —
-    reasoning_piece is only ever non-empty on models that expose extended-thinking/reasoning
-    traces, empty string otherwise — and returns the full (content, reasoning) once the stream
-    ends. Only retries a RateLimitError raised before the first chunk arrives: a stream that
-    fails partway through can't be replayed without duplicating whatever on_chunk already saw,
-    so a mid-stream failure of any kind propagates immediately instead of retrying."""
+    stream=True) call. Calls on_chunk(content_piece, reasoning_piece) as each chunk arrives and
+    returns the full (content, reasoning) once the stream ends. Only retries a RateLimitError
+    before the first chunk — a stream failing partway through can't be replayed without
+    duplicating what on_chunk already saw, so any mid-stream failure propagates immediately."""
     async for attempt in AsyncRetrying(
         stop=stop_after_attempt(settings.router.rate_limit_max_retries),
         wait=wait_fixed(settings.router.rate_limit_wait_seconds),

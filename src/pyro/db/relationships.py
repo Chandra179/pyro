@@ -1,10 +1,7 @@
 """Relationship edges: one ArangoDB edge document per resolved connection between two entities.
 
-This is a real edge collection — every document carries `_from`/`_to` handles into the entities
-collection alongside the denormalized `source`/`target` names the templates render. The
-denormalized names are what the flat list views use; the handles are what make any future
-multi-hop question (blast radius, upstream dependencies, cycle detection) a database traversal
-instead of a full scan plus an in-memory graph build.
+Carries `_from`/`_to` handles into entities (for AQL traversal) alongside denormalized
+`source`/`target` names (for the flat list views templates render).
 """
 
 from __future__ import annotations
@@ -37,17 +34,13 @@ class RelationshipRepository:
         relation_phrase: str | None = None,
         extra_source_article_ids: list[str] | None = None,
     ) -> str:
-        """Upsert one edge, keyed by (company, source, relation, target) so re-merging the same
-        article's relationships updates rather than duplicates. `relation` is expected to be a
-        canonical predicate (extract.schema.RelationKind); `relation_phrase` carries the model's
-        original wording when it differed.
+        """Upsert one edge, keyed by (company, source, relation, target) so re-merging updates
+        rather than duplicates.
 
-        `source_article_ids` accumulates every article that has ever stated this edge, rather than
-        being overwritten to just the most recent one — otherwise an edge re-confirmed by five
-        posts over two years looks identical to one mentioned once in passing, and that
-        corroboration signal is unrecoverable once overwritten. `extra_source_article_ids` lets a
-        caller (graph/backfill.py, rewriting an edge onto a new key) carry an old edge's full
-        history into the new document instead of collapsing it back down to one id."""
+        `source_article_ids` accumulates every article that has stated this edge rather than being
+        overwritten — an edge confirmed by five posts should stay distinguishable from one
+        mentioned once. `extra_source_article_ids` lets graph/backfill.py carry an old edge's full
+        history into a rewritten key instead of collapsing it to one id."""
         key = relationship_key(company_name, source, relation, target)
         source_key = entity_key(company_name, source)
         target_key = entity_key(company_name, target)
@@ -92,11 +85,8 @@ class RelationshipRepository:
         }
         IN @@col
         """
-        # The UPDATE clause deliberately never mentions invalid_at (AQL's UPDATE merges only the
-        # attributes listed, leaving others as-is) — a routine re-merge of an edge an article
-        # already stated must not silently reopen a validity window invalidate_outgoing closed.
-        # Only invalidate_outgoing itself, or a future explicit "revalidate" operation, should ever
-        # change invalid_at on an existing edge.
+        # UPDATE deliberately never mentions invalid_at (AQL merges only listed attributes) — a
+        # routine re-merge must not reopen a validity window invalidate_outgoing closed.
         self._query(
             query,
             key=key,
@@ -122,15 +112,10 @@ class RelationshipRepository:
         at: str,
         exclude_relation: str | None = None,
     ) -> int:
-        """Close the validity window (set `invalid_at`) on every currently-open edge sourced from
-        `source`, except edges whose relation is `exclude_relation`.
-
-        Used when a `replaced_by` edge tells us `source` was decommissioned: the behavior it
-        described (`calls`, `writes_to`, ...) stopped being current, so those edges should no
-        longer render as part of the live system map — but the `replaced_by` fact itself, and
-        anything pointing *at* `source` (e.g. who owned/deployed it), remains historically true and
-        is left untouched. Idempotent: edges already closed are skipped. Returns how many edges
-        this call closed."""
+        """Close the validity window on every open edge sourced from `source` (except
+        `exclude_relation`) — used when a `replaced_by` edge marks `source` decommissioned.
+        Edges pointing *at* `source` are left untouched since those remain historically true.
+        Idempotent. Returns how many edges this call closed."""
         source_key = entity_key(company_name, source)
         query = """
         FOR doc IN @@col
