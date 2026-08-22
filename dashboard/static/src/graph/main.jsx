@@ -1,7 +1,5 @@
-// Entry point bundled (with React, React Flow, and dagre) into static/js/graph-island.bundle.js
-// by `npm run build:js` — see dashboard/package.json. Exposes window.PyroGraph.renderIn so
-// static/js/app.js's lazy-load-on-first-appearance logic (unchanged from the old Cytoscape
-// integration) can drive it without needing to know anything about React underneath.
+// Entry point bundled into static/js/graph-island.bundle.js by `npm run build:js`. Exposes
+// window.PyroGraph.renderIn so app.js's lazy-loader can drive it without knowing React.
 import { createElement } from "react";
 import { createRoot } from "react-dom/client";
 import GraphIsland from "./GraphIsland.jsx";

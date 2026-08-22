@@ -1,22 +1,8 @@
 {#
-  Extraction view: one page of articles for the selected company and where each sits in the
-  pipeline. Rendered inside partials/data_panel.html, which owns the 4s poll wrapper and the
-  error/empty states — this file assumes `selected` is set and the database read succeeded.
-
-  `articles` is a page of lightweight summary dicts (db/articles.py's list_summaries), not full
-  Article documents — `stage`/`entity_count` are computed server-side in AQL rather than here, so
-  this template never needs cleaned_text or the full extracted_graph blob just to render a rail
-  and a count.
-
-  Pager state (`page`) rides along on every URL below — the row/table actions and the poll's own
-  next `hx-get` (data_panel.html) all carry it forward, the same way `company`/`view` already do,
-  so a poll tick or a delete never silently bounces the viewer back to page 1.
-
-  Status used to render as a boxed pill in its own table column, with a legend row living in
-  data_shell.html between the tabs and this panel. Both are gone: colour now lives on each row as
-  a left rail (`stage_colors` below), and the legend is a hover/focus popover anchored to a small
-  dot-stack button next to "Delete all" — informational, so it stays out of the way until asked
-  for, and never fights the destructive action for attention the way a persistent colour block did.
+  Extraction view: one page of articles + pipeline stage per row. Assumes `selected` is set and
+  the DB read succeeded (data_panel.html owns the poll wrapper and error/empty states).
+  `articles` is db/articles.py's lightweight summary dicts, not full Article documents.
+  `page` rides on every URL here so a poll tick or delete never bounces back to page 1.
 #}
 {% set stage_ns = namespace(labels={}, colors={}) %}
 {% set stage_color_classes = {

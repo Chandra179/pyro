@@ -1,10 +1,7 @@
 {#
-  Graph view: the selected company's whole entity graph as one interactive React Flow diagram
-  (elements built server-side by api/graph_view.py, drawn client-side by
-  dashboard/static/src/graph/GraphIsland.jsx via static/js/app.js's lazy loader — pan, zoom,
-  node dragging, and per-domain expand/collapse all live there). Rendered inside
-  partials/data_panel.html, which owns the error/empty states — this file assumes `selected` is
-  set and the database read succeeded.
+  Graph view: whole-company entity graph as one React Flow diagram (elements built by
+  api/graph_view.py, drawn by static/src/graph/GraphIsland.jsx). Assumes `selected` is set and
+  the DB read succeeded — error/empty states live in data_panel.html.
 #}
 <div class="mb-3 flex items-center justify-between">
   <h2 class="text-base font-medium">Entity graph · {{ selected }}</h2>
@@ -13,11 +10,7 @@
       {{ graph.entities | length }} entit{{ "y" if graph.entities | length == 1 else "ies" }} ·
       {{ graph.relationships | length }} relationship{{ "s" if graph.relationships | length != 1 }}
     </span>
-    {# A plain navigation rather than an htmx swap: an outerHTML swap re-triggers
-       renderReactFlowIn via htmx:afterSwap (see static/js/app.js) same as any other panel
-       update, but a whole-company diagram only actually changes on merge-run boundaries, not
-       continuously — an explicit Refresh link (rather than the extraction view's 4s self-poll)
-       avoids tearing down and rebuilding an interactive graph the viewer might be mid-drag on. #}
+    {# Plain nav, not a self-poll — the diagram only changes on merge-run boundaries. #}
     <a
       href="/data?company={{ selected | urlencode }}&view=graph"
       class="rounded-md border border-slate-200 px-2 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-800 dark:text-slate-300 dark:hover:bg-slate-800"

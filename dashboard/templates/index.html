@@ -56,11 +56,7 @@
     </form>
   </section>
 
-  {#
-    Static explainer of the real pipeline stages (see docs/architecture.md) — not live job
-    status. The dashboard deliberately doesn't render the `jobs` collection back to any page
-    (see api/jobs.py / CLAUDE.md), so this stays fixed copy, not a progress tracker.
-  #}
+  {# Static explainer, not live job status — the dashboard never renders `jobs` back to a page. #}
   <aside class="rounded-lg border border-slate-200 bg-slate-50 p-6 dark:border-slate-800 dark:bg-slate-950/40">
     <h3 class="mb-1 text-sm font-medium">What happens after you click run</h3>
     <p class="mb-5 text-xs text-slate-500 dark:text-slate-400">

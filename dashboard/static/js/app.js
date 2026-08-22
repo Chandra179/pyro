@@ -1,18 +1,9 @@
-/*
- * Dashboard behavior: off-canvas sidebar, dark-mode toggle, react flow graph mounting, modal backdrop.
- *
- * This used to be ~120 lines of inline <script> in base.html, which meant it was re-sent on every
- * page load, never cached, and invisible to any linter or formatter. The one piece that has to
- * stay inline is the theme bootstrap in base.html's <head> — it must run before first paint to
- * avoid a flash of the wrong theme, which a deferred external file cannot do.
- *
- * Loaded with `defer`, so the DOM is parsed before any of this runs.
- */
+// Dashboard behavior: off-canvas sidebar, dark-mode toggle, react flow graph mounting, modal
+// backdrop. Loaded with `defer`. Theme bootstrap stays inline in base.html's <head> — it must
+// run before first paint, which a deferred external file can't do.
 
 // --- off-canvas sidebar (below md/768px) ----------------------------------------------------
-// Toggled by the header hamburger and closed by tapping the backdrop or navigating (nav links do
-// a full page load, so no explicit close-on-navigate handler is needed). Global because
-// base.html's backdrop uses an inline onclick.
+// Global because base.html's backdrop uses an inline onclick.
 function toggleSidebar(open) {
   var sidebar = document.getElementById("sidebar");
   var backdrop = document.getElementById("sidebar-backdrop");
@@ -47,24 +38,15 @@ document.getElementById("sidebar-toggle").addEventListener("click", function () 
 })();
 
 // --- react flow (interactive entity graph) ---------------------------------------------------
-// The graph view's diagram comes back from the server as a `<div class="react-flow-graph"
-// data-elements="...">` block (see api/render.py) — this scans for that class and mounts a
-// pan/zoom/drag/expand-collapse React Flow graph (dashboard/static/src/graph/GraphIsland.jsx,
-// bundled with React + React Flow + dagre into graph-island.bundle.js by `npm run build:js`).
-// Colors are picked once at mount time based on the current theme (isDarkMode lives in
-// static/src/graph/main.jsx, read there rather than passed in from here) rather than kept live —
-// same limitation the old Cytoscape/Mermaid integrations had: a diagram already on screen doesn't
-// repaint itself if dark mode is toggled after the fact, only a fresh render (page load / htmx
-// swap) picks up the new theme.
+// Server sends `<div class="react-flow-graph" data-elements="...">` (api/render.py); this scans
+// for it and mounts GraphIsland.jsx, bundled into graph-island.bundle.js by `npm run build:js`.
+// Theme is read once at mount (static/src/graph/main.jsx) — an on-screen diagram doesn't repaint
+// if dark mode toggles after the fact, only a fresh render does.
 
-// graph-island.bundle.js is ~380KB — loaded on demand, the first time a `.react-flow-graph` node
-// actually shows up in the DOM, instead of unconditionally in every page's <head> (most pages
-// never render a diagram, and the Data page's *default* tab is Extraction, not Graph). A
-// <script> tag gated on the current page/tab doesn't work for this: the Data page's tab switch
-// is a partial htmx swap (partials/data_shell.html's hx-select) that never re-processes a
-// fetched response's <head>, so a tag that only appears in the Graph tab's own render would
-// never load if the viewer arrived on the Extraction tab and clicked over — this has to be
-// driven off DOM content, not off routing.
+// Loaded on demand (~380KB) on first `.react-flow-graph` appearance rather than unconditionally,
+// since most pages never render one. Must be DOM-driven, not route-driven: the Data page's tab
+// switch is a partial htmx swap that never re-processes <head>, so a tag scoped to the Graph
+// tab's own render wouldn't load for a viewer who arrived on Extraction and clicked over.
 var reactFlowLoadPromise = null;
 function loadReactFlow() {
   if (!reactFlowLoadPromise) {
@@ -105,18 +87,12 @@ function renderReactFlowIn(root) {
 renderReactFlowIn(document.body);
 
 document.body.addEventListener("htmx:afterSwap", function () {
-  // Not evt.detail.target: for an outerHTML swap that value is the old node htmx just replaced
-  // (already removed from the document — detail.target.isConnected is false by the time this
-  // listener runs), not the new one. document.body is always live, and the :not([data-processed])
-  // filter already limits this to nodes that actually need drawing, so re-scanning the whole
-  // page on every swap is cheap and correct regardless of which nested element the swap
-  // actually touched.
+  // Not evt.detail.target: for an outerHTML swap that's the old, now-detached node.
   renderReactFlowIn(document.body);
 });
 
 // --- modal ----------------------------------------------------------------------------------
-// Click on the <dialog> backdrop (not its content) closes it — native <dialog> only auto-closes
-// on Escape by default.
+// Backdrop click closes it — native <dialog> only auto-closes on Escape.
 document.addEventListener("click", function (evt) {
   var dialog = document.getElementById("preview-modal");
   if (dialog && evt.target === dialog) dialog.close();

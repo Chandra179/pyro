@@ -1,12 +1,6 @@
 {#
-  Dispatcher for the Data view's results panel. Owns only what the two views share: the polling
-  wrapper, the database-error state, and the no-companies-yet state. The views themselves have no
-  markup in common — one is a table of articles with row actions, the other a rendered diagram —
-  so they live in their own files rather than as two branches of one 160-line template.
-
-  Only the extraction view self-polls. The graph view deliberately does not: it's an interactive
-  React Flow graph the viewer may be mid-pan/zoom/drag/expand-collapse on, and a whole-company
-  diagram only changes on merge-run boundaries anyway — see _panel_graph.html's Refresh link.
+  Dispatcher: owns the polling wrapper, db-error, and no-companies states shared by both views.
+  Only extraction self-polls — the graph view is interactive and only changes on merge boundaries.
 #}
 <div
   id="data-panel-inner"

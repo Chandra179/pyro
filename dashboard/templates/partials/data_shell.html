@@ -1,10 +1,6 @@
 {#
-  The whole navigable Data region: company picker, extraction/graph tabs,
-  and the results panel. Company/tab changes hx-get the full `/data` page and
-  pluck this element back out (hx-select) so the tab bar's active state and
-  the pushed URL both come from the same server render — no separate partial
-  route to keep in sync. The results panel below re-polls itself on a short
-  interval via `/data/panel` without touching this outer element or the URL.
+  Company picker + tabs + results panel. Tab/company changes hx-get the full `/data` page and
+  hx-select this element back out, so tab state and the pushed URL come from the same render.
 #}
 <div id="data-shell">
   <div class="flex flex-wrap items-center justify-between gap-4">
@@ -62,26 +58,9 @@
   </div>
 
   {#
-    Persistent across the panel's 4s auto-refresh (it lives outside
-    #data-panel-inner), so an open preview survives a poll tick. Populated by
-    hx-get requests from extraction table rows in partials/data_panel.html —
-    the graph view itself renders inline in the panel, not through this modal.
-
-    Fixed centering (top-1/2 left-1/2 + translate) rather than relying on the
-    native <dialog> auto-centering: Tailwind's preflight zeroes out `margin`
-    on every element, which breaks the UA stylesheet's `margin: auto`
-    centering trick dialogs normally get for free.
-
-    `hidden open:flex`, not a bare `flex` — a plain `dialog:not([open])
-    {display:none}` rule only exists in the browser's user-agent stylesheet,
-    and author CSS (any Tailwind display utility, even at equal or lower
-    specificity) always outranks user-agent CSS. An unconditional `flex`
-    class would defeat the browser's native close/hide behavior: closing the
-    dialog (Escape, backdrop click, the X button) clears the `open`
-    attribute and drops it from the modal top layer, but it stays fully
-    painted on screen since nothing tells it to stop being `display:flex`.
-    Tailwind's `open:` variant targets `[open]` directly, so display tracks
-    the dialog's actual open state instead of being permanently on.
+    Lives outside #data-panel-inner so it survives the panel's 4s poll. Manual centering because
+    Tailwind's preflight zeroes `margin`, breaking native <dialog> auto-centering. `open:flex`
+    (not bare `flex`) so display tracks the `open` attribute instead of staying on after close.
   #}
   <dialog
     id="preview-modal"

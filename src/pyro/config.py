@@ -138,6 +138,9 @@ class CleanConfig(BaseModel):
 
 
 class Settings(BaseSettings):
+    # Fields stay flat here (not grouped into a *Config) when they're meant to be tuned per
+    # deployment via a plain env var — no env_nested_delimiter is set, so nested BaseModel groups
+    # below can only be overridden through config.yaml, never a flat env var.
     model_config = SettingsConfigDict(
         env_file=".env", extra="ignore", yaml_file=_CONFIG_YAML_PATH
     )
@@ -201,6 +204,8 @@ class Settings(BaseSettings):
         "Data Platform",
         "ML/Detection",
         "Media/Content Pipeline",
+        "Network Infrastructure",
+        "Developer Platform",
         "Other",
     ]
 

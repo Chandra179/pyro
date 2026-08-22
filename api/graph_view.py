@@ -76,6 +76,7 @@ def build_graph_elements(entities: list[dict], relationships: list[dict]) -> dic
                 "source": slug(rel["source"]),
                 "target": slug(rel["target"]),
                 "label": label,
+                "relation": rel["relation"],
             }
         )
 

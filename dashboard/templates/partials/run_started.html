@@ -1,10 +1,4 @@
-{#
-  Replaces the old job-card list this used to hx-swap into #recent-runs-list: the pipeline now
-  runs and persists entirely server-side (api/jobs.py writes each stage transition and merge
-  call's output/reasoning straight to ArangoDB's `jobs` collection), so there's nothing left for
-  the browser to poll or subscribe to. This is just a one-shot acknowledgment that the submit
-  succeeded — progress and results live on the Data page instead.
-#}
+{# One-shot ack only — the pipeline runs and persists entirely server-side (api/jobs.py). #}
 <div
   class="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300"
 >

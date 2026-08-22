@@ -23,6 +23,8 @@ domains:
   - Data Platform
   - ML/Detection
   - Media/Content Pipeline
+  - Network Infrastructure
+  - Developer Platform
   - Other
 
 # ============================================================================

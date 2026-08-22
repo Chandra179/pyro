@@ -26,12 +26,7 @@
   </head>
   <body class="h-full bg-slate-50 text-slate-900 antialiased dark:bg-slate-950 dark:text-slate-100">
     <div class="flex h-full">
-      {#
-        Below md (768px) the sidebar is an off-canvas panel: fixed and translated fully
-        off-screen by default, slid in by toggleSidebar() (below) swapping the translate-x
-        utility when the header's hamburger button is tapped. At md+ "md:static md:translate-x-0"
-        overrides both, reverting it to the normal in-flow column it always was.
-      #}
+      {# Below md, sidebar is off-canvas; toggleSidebar() slides it in via translate-x. #}
       <div
         id="sidebar-backdrop"
         class="fixed inset-0 z-30 hidden bg-slate-900/50 md:hidden"
