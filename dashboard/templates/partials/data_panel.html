@@ -5,7 +5,7 @@
 <div
   id="data-panel-inner"
   {% if selected and view == "extraction" %}
-  hx-get="/data/panel?company={{ selected | urlencode }}&view={{ view }}&page={{ page }}"
+  hx-get="/data/panel?company_name={{ selected | urlencode }}&view={{ view }}&page={{ page }}"
   hx-trigger="every 4s"
   hx-swap="outerHTML"
   {% endif %}

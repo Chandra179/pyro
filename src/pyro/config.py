@@ -57,6 +57,7 @@ class ScrapeConfig(BaseModel):
     settle_ms: int = 3000
     max_attempts: int = 3
     retry_backoff_s: int = 8
+    page_goto_timeout_ms: int = 60_000
     user_agent: str = (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
         "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
@@ -73,6 +74,7 @@ class ScrapeConfig(BaseModel):
 
 class SitemapConfig(BaseModel):
     user_agent: str = "Mozilla/5.0 (compatible; pyro-blog-crawler/1.0)"
+    request_timeout_s: float = 30.0
     non_article_path_segments: list[str] = [
         "/tagged/",
         "/tag/",
@@ -165,6 +167,12 @@ class Settings(BaseSettings):
     # bulk-submission would have them all contend at once. A job beyond this cap waits
     # ("pending") rather than running; see api/jobs.py's `_JOB_SLOTS`.
     max_concurrent_jobs: int = 3
+
+    # Oldest finished jobs are dropped past this cap, from both the in-memory store and ArangoDB.
+    max_retained_jobs: int = 50
+
+    # Rows per page on the Data page's article table.
+    articles_page_size: int = 50
 
     # Free-tier models are prone to repetition-loop collapse; low temperature + frequency
     # penalty discourages reusing an already-emitted token.

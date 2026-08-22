@@ -78,7 +78,7 @@ def test_data_page_lists_companies_and_defaults_to_extraction():
 
 def test_data_panel_respects_selected_company_and_view():
     client = _client(_StubDb(companies=["Netflix", "Stripe"]))
-    resp = client.get("/data/panel", params={"company": "Stripe", "view": "graph"})
+    resp = client.get("/data/panel", params={"company_name": "Stripe", "view": "graph"})
     assert resp.status_code == 200
     assert "Entity graph · Stripe" in resp.text
 
@@ -92,7 +92,7 @@ def test_data_panel_renders_react_flow_graph_when_graph_has_entities():
             ],
         )
     )
-    resp = client.get("/data/panel", params={"company": "Netflix", "view": "graph"})
+    resp = client.get("/data/panel", params={"company_name": "Netflix", "view": "graph"})
     assert resp.status_code == 200
     assert 'class="react-flow-graph not-prose"' in resp.text
     assert "Cassandra" in resp.text
@@ -111,7 +111,7 @@ def test_graph_view_labels_use_humanized_relation():
             ],
         )
     )
-    resp = client.get("/data/panel", params={"company": "Netflix", "view": "graph"})
+    resp = client.get("/data/panel", params={"company_name": "Netflix", "view": "graph"})
     assert resp.status_code == 200
     # Rendered inside an HTML-escaped data-elements JSON attribute, so the space is the literal
     # humanized text (no HTML entity involved, unlike the old Mermaid arrow syntax).
@@ -122,8 +122,8 @@ def test_extraction_panel_polls_but_graph_panel_does_not():
     """Only the extraction view self-refreshes — the graph view is an interactive React Flow
     graph the viewer may be mid-pan/zoom/drag on, so it offers an explicit Refresh link instead."""
     client = _client(_StubDb(companies=["Netflix"]))
-    extraction = client.get("/data/panel", params={"company": "Netflix"})
-    graph = client.get("/data/panel", params={"company": "Netflix", "view": "graph"})
+    extraction = client.get("/data/panel", params={"company_name": "Netflix"})
+    graph = client.get("/data/panel", params={"company_name": "Netflix", "view": "graph"})
     assert "every 4s" in extraction.text
     assert "every 4s" not in graph.text
 

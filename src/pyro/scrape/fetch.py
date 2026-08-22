@@ -28,7 +28,7 @@ async def _fetch_page_once(
 ) -> tuple[str | None, str]:
     page: Page = await context.new_page()
     try:
-        await page.goto(url, wait_until="domcontentloaded", timeout=60_000)
+        await page.goto(url, wait_until="domcontentloaded", timeout=config.page_goto_timeout_ms)
         await page.wait_for_timeout(config.settle_ms)
         title = await page.title()
         html = await page.content()

@@ -54,7 +54,7 @@
     {% if total_articles %}
     <button
       type="button"
-      hx-delete="/data/articles?company={{ selected | urlencode }}&view=extraction"
+      hx-delete="/data/articles?company_name={{ selected | urlencode }}&view=extraction"
       hx-target="#data-panel-inner"
       hx-swap="outerHTML"
       hx-confirm="Delete all {{ total_articles }} extracted article{{ "s" if total_articles != 1 }} for {{ selected }}? This cannot be undone."
@@ -98,7 +98,7 @@
           <div class="flex items-center gap-1">
             <button
               type="button"
-              hx-get="/data/article/{{ a.id | urlencode }}?company={{ selected | urlencode }}"
+              hx-get="/data/article/{{ a.id | urlencode }}?company_name={{ selected | urlencode }}"
               hx-target="#preview-modal-body"
               hx-swap="innerHTML"
               onclick="document.getElementById('preview-modal').showModal()"
@@ -113,7 +113,7 @@
             </button>
             <button
               type="button"
-              hx-delete="/data/article/{{ a.id | urlencode }}?company={{ selected | urlencode }}&view=extraction&page={{ page }}"
+              hx-delete="/data/article/{{ a.id | urlencode }}?company_name={{ selected | urlencode }}&view=extraction&page={{ page }}"
               hx-target="#data-panel-inner"
               hx-swap="outerHTML"
               hx-confirm="Delete '{{ a.title or a.id }}'? This cannot be undone."
@@ -137,7 +137,7 @@
   <button
     type="button"
     {% if page > 1 %}
-    hx-get="/data/panel?company={{ selected | urlencode }}&view=extraction&page={{ page - 1 }}"
+    hx-get="/data/panel?company_name={{ selected | urlencode }}&view=extraction&page={{ page - 1 }}"
     hx-target="#data-panel-inner"
     hx-swap="outerHTML"
     {% else %}
@@ -151,7 +151,7 @@
   <button
     type="button"
     {% if page < total_pages %}
-    hx-get="/data/panel?company={{ selected | urlencode }}&view=extraction&page={{ page + 1 }}"
+    hx-get="/data/panel?company_name={{ selected | urlencode }}&view=extraction&page={{ page + 1 }}"
     hx-target="#data-panel-inner"
     hx-swap="outerHTML"
     {% else %}

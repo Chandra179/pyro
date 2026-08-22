@@ -230,7 +230,7 @@ class Job:
 # size is driven by model output, not by job count. Insertion-ordered, so evicting the oldest
 # finished job is just walking from the front.
 JOBS: dict[str, Job] = {}
-MAX_RETAINED_JOBS = 50
+MAX_RETAINED_JOBS = Settings().max_retained_jobs
 
 
 def _evict_old_jobs(database: Database) -> None:

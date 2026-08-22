@@ -102,22 +102,21 @@ def create_job(
     )
 
 
-# Rows per page in the extraction table (dashboard/templates/partials/_panel_extraction.html).
-# Kept fixed rather than user-configurable — the panel polls itself every 4s, and a per-request
-# page-size choice would need to be threaded through that poll URL for no real benefit yet.
-_ARTICLES_PAGE_SIZE = 50
-
-
 def _data_context(
-    db: Database, company: str | None, view: str, page: int = 1
+    db: Database, company_name: str | None, view: str, page: int = 1
 ) -> dict:
     view = view if view in ("extraction", "graph") else "extraction"
     page = max(page, 1)
-    article_stages = get_settings().article_stages
+    settings = get_settings()
+    article_stages = settings.article_stages
+    # Rows per page in the extraction table (dashboard/templates/partials/_panel_extraction.html).
+    articles_page_size = settings.articles_page_size
     try:
         companies = db.list_company_names()
         selected = (
-            company if company in companies else (companies[0] if companies else None)
+            company_name
+            if company_name in companies
+            else (companies[0] if companies else None)
         )
         # Only the extraction view renders articles — skip the fetch entirely for the graph view,
         # which never uses it, rather than paying for a page of article rows on every poll of a
@@ -126,10 +125,10 @@ def _data_context(
         if selected and view == "extraction":
             articles, total_articles = db.list_article_summaries(
                 selected,
-                limit=_ARTICLES_PAGE_SIZE,
-                offset=(page - 1) * _ARTICLES_PAGE_SIZE,
+                limit=articles_page_size,
+                offset=(page - 1) * articles_page_size,
             )
-            total_pages = max(1, -(-total_articles // _ARTICLES_PAGE_SIZE))
+            total_pages = max(1, -(-total_articles // articles_page_size))
             if page > total_pages:
                 # Only reachable via a hand-edited URL (a stale page number after articles were
                 # deleted elsewhere) — re-fetch once at the corrected offset rather than showing
@@ -137,8 +136,8 @@ def _data_context(
                 page = total_pages
                 articles, total_articles = db.list_article_summaries(
                     selected,
-                    limit=_ARTICLES_PAGE_SIZE,
-                    offset=(page - 1) * _ARTICLES_PAGE_SIZE,
+                    limit=articles_page_size,
+                    offset=(page - 1) * articles_page_size,
                 )
         graph = (
             {
@@ -183,12 +182,12 @@ def _data_context(
 def data_page(
     request: Request,
     db: DbDep,
-    company: str | None = None,
+    company_name: str | None = None,
     view: str = "extraction",
     page: int = 1,
 ) -> HTMLResponse:
     return templates.TemplateResponse(
-        request, "data.html", _data_context(db, company, view, page)
+        request, "data.html", _data_context(db, company_name, view, page)
     )
 
 
@@ -196,20 +195,20 @@ def data_page(
 def data_panel(
     request: Request,
     db: DbDep,
-    company: str | None = None,
+    company_name: str | None = None,
     view: str = "extraction",
     page: int = 1,
 ) -> HTMLResponse:
     return templates.TemplateResponse(
-        request, "partials/data_panel.html", _data_context(db, company, view, page)
+        request, "partials/data_panel.html", _data_context(db, company_name, view, page)
     )
 
 
 @app.get("/data/article/{article_id}", response_class=HTMLResponse)
 def article_preview(
-    request: Request, db: DbDep, article_id: str, company: str
+    request: Request, db: DbDep, article_id: str, company_name: str
 ) -> HTMLResponse:
-    article = db.get_article_for_company(company, article_id)
+    article = db.get_article_for_company(company_name, article_id)
     if article is None:
         raise HTTPException(status_code=404, detail="article not found")
     return templates.TemplateResponse(
@@ -222,33 +221,33 @@ def delete_article_route(
     request: Request,
     db: DbDep,
     article_id: str,
-    company: str,
+    company_name: str,
     view: str = "extraction",
     page: int = 1,
 ) -> HTMLResponse:
     # Ownership check before deleting, so an article id alone can't delete another company's row.
-    if db.get_article_for_company(company, article_id) is not None:
+    if db.get_article_for_company(company_name, article_id) is not None:
         db.delete_article(article_id)
     return templates.TemplateResponse(
-        request, "partials/data_panel.html", _data_context(db, company, view, page)
+        request, "partials/data_panel.html", _data_context(db, company_name, view, page)
     )
 
 
 @app.delete("/data/articles", response_class=HTMLResponse)
 def delete_all_articles_route(
-    request: Request, db: DbDep, company: str, view: str = "extraction"
+    request: Request, db: DbDep, company_name: str, view: str = "extraction"
 ) -> HTMLResponse:
-    db.delete_articles_for_company(company)
+    db.delete_articles_for_company(company_name)
     return templates.TemplateResponse(
-        request, "partials/data_panel.html", _data_context(db, company, view)
+        request, "partials/data_panel.html", _data_context(db, company_name, view)
     )
 
 
 @app.delete("/data/graph", response_class=HTMLResponse)
 def delete_graph_route(
-    request: Request, db: DbDep, company: str, view: str = "graph"
+    request: Request, db: DbDep, company_name: str, view: str = "graph"
 ) -> HTMLResponse:
-    db.delete_graph_for_company(company)
+    db.delete_graph_for_company(company_name)
     return templates.TemplateResponse(
-        request, "partials/data_panel.html", _data_context(db, company, view)
+        request, "partials/data_panel.html", _data_context(db, company_name, view)
     )

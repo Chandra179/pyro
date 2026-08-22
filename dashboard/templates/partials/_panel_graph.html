@@ -12,7 +12,7 @@
     </span>
     {# Plain nav, not a self-poll — the diagram only changes on merge-run boundaries. #}
     <a
-      href="/data?company={{ selected | urlencode }}&view=graph"
+      href="/data?company_name={{ selected | urlencode }}&view=graph"
       class="rounded-md border border-slate-200 px-2 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-800 dark:text-slate-300 dark:hover:bg-slate-800"
     >
       Refresh
@@ -20,7 +20,7 @@
     {% if graph.entities %}
     <button
       type="button"
-      hx-delete="/data/graph?company={{ selected | urlencode }}&view=graph"
+      hx-delete="/data/graph?company_name={{ selected | urlencode }}&view=graph"
       hx-target="#data-panel-inner"
       hx-swap="outerHTML"
       hx-confirm="Delete the entire entity graph for {{ selected }}? This cannot be undone — the next merge run will rebuild it from scratch."

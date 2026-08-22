@@ -41,7 +41,7 @@ async def fetch_sitemap_urls(
     # XML to clients without a browser-like User-Agent.
     headers = {"User-Agent": config.user_agent}
     client = client or httpx.AsyncClient(
-        timeout=30.0, follow_redirects=True, headers=headers
+        timeout=config.request_timeout_s, follow_redirects=True, headers=headers
     )
     try:
         urls = await _fetch_locs(sitemap_url, client)
