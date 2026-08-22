@@ -5,53 +5,91 @@
 {% block page_subtitle %}Submit a sitemap or a single article URL to extract{% endblock %}
 
 {% block content %}
-<section class="rounded-lg border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900/60">
-  <h2 class="mb-1 text-base font-medium">New extraction run</h2>
-  <p class="mb-4 text-sm text-slate-500 dark:text-slate-400">
-    Paste a blog's <code class="rounded bg-slate-100 px-1 py-0.5 text-xs dark:bg-slate-800">sitemap.xml</code>
-    URL to crawl every post, or a single article URL to extract just that page — detected automatically.
-  </p>
-  <form
-    hx-post="/jobs"
-    hx-target="#run-feedback"
-    hx-swap="innerHTML"
-    class="flex flex-col gap-6"
-  >
-    <div class="grid grid-cols-1 gap-4 sm:grid-cols-6">
-      <label class="field sm:col-span-2">
-        Company name
-        <input type="text" name="company_name" placeholder="Netflix" required class="field-control" />
-      </label>
-      <label class="field sm:col-span-3">
-        URL
-        <input type="url" name="url" placeholder="Sitemap or article URL" required class="field-control" />
-      </label>
-      <label class="field sm:col-span-1">
-        Limit
-        <input type="number" name="limit" min="1" placeholder="All" class="field-control" />
-      </label>
-    </div>
+<div class="grid grid-cols-1 gap-6 lg:grid-cols-[1.3fr_1fr] lg:items-start">
+  <section class="rounded-lg border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900/60">
+    <h2 class="mb-1 text-base font-medium">New extraction run</h2>
+    <p class="mb-4 text-sm text-slate-500 dark:text-slate-400">
+      Paste a blog's <code class="rounded bg-slate-100 px-1 py-0.5 text-xs dark:bg-slate-800">sitemap.xml</code>
+      URL to crawl every post, or a single article URL to extract just that page — detected automatically.
+    </p>
+    <form
+      hx-post="/jobs"
+      hx-target="#run-feedback"
+      hx-swap="innerHTML"
+      class="flex flex-col gap-6"
+    >
+      <div class="grid grid-cols-1 gap-4 sm:grid-cols-6">
+        <label class="field sm:col-span-2">
+          Company name
+          <input type="text" name="company_name" placeholder="Netflix" required class="field-control" />
+        </label>
+        <label class="field sm:col-span-3">
+          URL
+          <input type="url" name="url" placeholder="Sitemap or article URL" required class="field-control" />
+        </label>
+        <label class="field sm:col-span-1">
+          Limit
+          <input type="number" name="limit" min="1" placeholder="All" class="field-control" />
+        </label>
+      </div>
 
-    <div class="border-t border-slate-100 pt-5 dark:border-slate-800">
-      <label class="field sm:max-w-xs">
-        Prompt templates
-        <select name="template" class="field-control">
-          {% for opt in template_options.templates %}
-          <option value="{{ opt.value }}">{{ opt.label }}</option>
-          {% endfor %}
-        </select>
-      </label>
-    </div>
+      <div class="border-t border-slate-100 pt-5 dark:border-slate-800">
+        <label class="field sm:max-w-xs">
+          Prompt templates
+          <select name="template" class="field-control">
+            {% for opt in template_options.templates %}
+            <option value="{{ opt.value }}">{{ opt.label }}</option>
+            {% endfor %}
+          </select>
+        </label>
+      </div>
 
-    <div class="flex items-center gap-3">
-      <button
-        type="submit"
-        class="rounded-md bg-indigo-500 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-400"
-      >
-        Run pipeline
-      </button>
-      <div id="run-feedback" class="flex-1 text-sm" aria-live="polite"></div>
-    </div>
-  </form>
-</section>
+      <div class="flex items-center gap-3">
+        <button
+          type="submit"
+          class="rounded-md bg-indigo-500 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-400"
+        >
+          Run pipeline
+        </button>
+        <div id="run-feedback" class="flex-1 text-sm" aria-live="polite"></div>
+      </div>
+    </form>
+  </section>
+
+  {#
+    Static explainer of the real pipeline stages (see docs/architecture.md) — not live job
+    status. The dashboard deliberately doesn't render the `jobs` collection back to any page
+    (see api/jobs.py / CLAUDE.md), so this stays fixed copy, not a progress tracker.
+  #}
+  <aside class="rounded-lg border border-slate-200 bg-slate-50 p-6 dark:border-slate-800 dark:bg-slate-950/40">
+    <h3 class="mb-1 text-sm font-medium">What happens after you click run</h3>
+    <p class="mb-5 text-xs text-slate-500 dark:text-slate-400">
+      Four stages, in order — each post moves through all four before it's merged into the graph.
+    </p>
+    <ol class="flex flex-col">
+      {% set stages = [
+        ("Scrape", "Fetches each post's rendered HTML."),
+        ("Clean", "Strips boilerplate and chunks the article text."),
+        ("Extract", "An LLM pulls systems, relationships, and a domain tag per post."),
+        ("Merge", "Folds it into the company's running system graph."),
+      ] %}
+      {% for name, desc in stages %}
+      <li class="flex gap-3">
+        <div class="flex flex-col items-center">
+          <span class="flex h-5 w-5 shrink-0 items-center justify-center rounded border border-indigo-200 bg-indigo-50 text-[10px] font-semibold text-indigo-600 dark:border-indigo-500/30 dark:bg-indigo-500/10 dark:text-indigo-300">
+            {{ loop.index }}
+          </span>
+          {% if not loop.last %}
+          <span class="my-1 w-px flex-1 bg-slate-200 dark:bg-slate-800"></span>
+          {% endif %}
+        </div>
+        <div class="{% if not loop.last %}pb-4{% endif %}">
+          <p class="text-sm font-medium">{{ name }}</p>
+          <p class="text-xs leading-relaxed text-slate-500 dark:text-slate-400">{{ desc }}</p>
+        </div>
+      </li>
+      {% endfor %}
+    </ol>
+  </aside>
+</div>
 {% endblock %}
