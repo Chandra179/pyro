@@ -9,6 +9,7 @@ kind/domain/relationships all come straight from extraction, unchanged.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from dataclasses import dataclass, field
@@ -190,6 +191,7 @@ async def _merge_article(
     matched_count = 0
     llm_resolved_count = sum(1 for r in mapping.values() if r.method == "llm")
 
+    entity_items = []
     for entity in entities:
         name = entity["name"]
         resolved = mapping.get(name)
@@ -199,40 +201,56 @@ async def _merge_article(
         else:
             new_count += 1
             known_before.add(canonical_name)
-        db.upsert_entity(
-            ctx.company_name,
-            canonical_name,
-            entity.get("kind", "service"),
-            entity.get("domain", "Other"),
-            alias=name if canonical_name != name else None,
-            alias_method=resolved.method if resolved and canonical_name != name else None,
-            first_seen_article_id=article.id,
-            description=entity.get("description"),
+        entity_items.append(
+            {
+                "name": canonical_name,
+                "kind": entity.get("kind", "service"),
+                "domain": entity.get("domain", "Other"),
+                "alias": name if canonical_name != name else None,
+                "alias_method": resolved.method if resolved and canonical_name != name else None,
+                "first_seen_article_id": article.id,
+                "description": entity.get("description"),
+            }
         )
         known.add(canonical_name)
+
+    # One batched read+write for the whole article's entities instead of a get+insert/update
+    # pair per entity.
+    if entity_items:
+        db.upsert_entities(ctx.company_name, entity_items)
 
     def _canonical(name: str) -> str:
         resolved = mapping.get(name)
         return resolved.canonical if resolved else name
 
-    for rel in relationships:
-        source_name = _canonical(rel["source"])
-        target_name = _canonical(rel["target"])
-        db.upsert_relationship(
+    # One batched write for the whole article's relationships instead of one AQL round-trip per
+    # edge — an article with 20 relationships used to be 20 separate calls.
+    canonical_relationships = [
+        {**rel, "source": _canonical(rel["source"]), "target": _canonical(rel["target"])}
+        for rel in relationships
+    ]
+    if canonical_relationships:
+        db.upsert_relationships(
             ctx.company_name,
-            source_name,
-            target_name,
-            rel["relation"],
-            rel.get("as_of"),
-            source_article_id=article.id,
-            relation_phrase=rel.get("relation_phrase"),
+            [
+                {
+                    "source": rel["source"],
+                    "target": rel["target"],
+                    "relation": rel["relation"],
+                    "as_of": rel.get("as_of"),
+                    "source_article_id": article.id,
+                    "relation_phrase": rel.get("relation_phrase"),
+                }
+                for rel in canonical_relationships
+            ],
         )
+    for rel in canonical_relationships:
         if rel["relation"] == "replaced_by":
-            # source_name was decommissioned; close its outgoing edges' validity window (see
+            # source was decommissioned; close its outgoing edges' validity window (see
             # db/relationships.py's invalidate_outgoing). Edges pointing *at* it stay valid.
             db.invalidate_outgoing_relationships(
                 ctx.company_name,
-                source_name,
+                rel["source"],
                 at=rel.get("as_of") or now_iso(),
                 exclude_relation="replaced_by",
             )
@@ -283,3 +301,30 @@ async def run_graph_merge(
         "entities": len(db.list_entities(company_name)),
         "relationships": len(db.list_relationships(company_name)),
     }
+
+
+class GraphMergeInProgress(Exception):
+    """Raised when a graph merge is already running for this company_name."""
+
+
+def run_graph_merge_exclusive(
+    db: Database,
+    settings: Settings,
+    company_name: str,
+    reporter: GraphReporter | None = None,
+) -> dict[str, int]:
+    """Synchronous, lock-guarded wrapper around run_graph_merge for callers outside an existing
+    event loop (cli.py, api/jobs.py's background-thread job runner). Raises GraphMergeInProgress
+    without running anything if company_name is already merging elsewhere.
+
+    The lock is a document in ArangoDB (db/merge_locks.py), not an in-memory `threading.Lock` —
+    the dashboard and cron/merge_pending.sh run as separate OS processes (see cron/README.md), so
+    a lock only the current process can see would let both merge the same company at once. A TTL
+    index expires an abandoned lock if its holder crashes before releasing.
+    """
+    if not db.acquire_merge_lock(company_name):
+        raise GraphMergeInProgress(company_name)
+    try:
+        return asyncio.run(run_graph_merge(db, settings, company_name, reporter))
+    finally:
+        db.release_merge_lock(company_name)

@@ -20,6 +20,7 @@ from pyro.clean.chunk import chunk_text
 from pyro.config import Settings
 from pyro.db import Database
 from pyro.extract.prompts import extraction_system_prompt, extraction_user_prompt
+from pyro.extract.relation_resolve import apply_relation_fallback
 from pyro.extract.schema import (
     DOMAINS,
     RELATION_KINDS,
@@ -144,7 +145,8 @@ async def extract_article(
         decoding_params=_decoding_params(settings),
     )
     graphs = [await extract_chunk(title, url, chunk, config) for chunk in chunks]
-    return merge_graph_chunks(graphs)
+    merged = merge_graph_chunks(graphs)
+    return await apply_relation_fallback(merged, settings, model_params)
 
 
 async def run_extraction(

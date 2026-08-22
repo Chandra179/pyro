@@ -51,9 +51,9 @@ def test_run_job_respects_the_concurrency_cap(monkeypatch):
     monkeypatch.setattr(jobs_module, "_resolve_urls", _fake_resolve_urls)
     monkeypatch.setattr(jobs_module, "open_db_from_settings", _fake_open_db)
     monkeypatch.setattr(jobs_module, "scrape_urls", AsyncMock(return_value=0))
-    monkeypatch.setattr(jobs_module, "_clean_impl", lambda **kwargs: None)
-    monkeypatch.setattr(jobs_module, "_extract_impl", lambda **kwargs: None)
-    monkeypatch.setattr(jobs_module, "_merge_graph_impl", _track_and_sleep)
+    monkeypatch.setattr(jobs_module, "run_cleaning", lambda *args, **kwargs: 0)
+    monkeypatch.setattr(jobs_module, "run_extraction", AsyncMock(return_value=0))
+    monkeypatch.setattr(jobs_module, "run_graph_merge_exclusive", _track_and_sleep)
 
     jobs = [_make_job(i) for i in range(5)]
     threads = [threading.Thread(target=_run_job, args=(job,)) for job in jobs]

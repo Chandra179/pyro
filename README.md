@@ -41,7 +41,7 @@ OVERRIDES = {
 Edit those constants, then:
 
 ```bash
-make run
+uv run python run_pipeline.py
 ```
 
 `LIMIT` caps the number of newly scraped articles — use a small number for a cheap
@@ -64,25 +64,22 @@ they process every pending article in the database.
 stages in one CLI call, same as `run_pipeline.py` but with flags instead of edited constants.
 
 Pipeline state (scraped/cleaned/extracted article data) and the merged entity graph both live in
-ArangoDB — one database (`pyro` by default), three collections (`articles`, `entities`,
-`relationships`), everything scoped by `company_name` so one instance serves every company you
-run the pipeline against. `relationships` is an ArangoDB **edge** collection: each edge carries
-`_from`/`_to` handles into `entities`, so the graph is traversable with AQL
-(`FOR v, e IN 1..3 OUTBOUND ...`) rather than only readable as a flat list.
+ArangoDB — one database (`pyro` by default), five collections (`articles`, `entities`,
+`relationships`, `jobs`, `merge_locks`), everything scoped by `company_name` so one instance
+serves every company you run the pipeline against. `relationships` is an ArangoDB **edge**
+collection: each edge carries `_from`/`_to` handles into `entities`, so the graph is traversable
+with AQL (`FOR v, e IN 1..3 OUTBOUND ...`) rather than only readable as a flat list. `jobs` and
+`merge_locks` are internal bookkeeping (dashboard run history, the cross-process merge lock) — see
+[`docs/architecture.md`](docs/architecture.md) for what each stores.
 
 ### One-off maintenance commands
 
-Neither is needed for a fresh database — both exist to bring a database created by an earlier
-version up to the current schema, and both are no-ops once they have run.
+Not needed for a fresh database — it exists to bring a database created before the relation
+vocabulary was controlled up to the current schema, and it's a no-op once it has run.
 
 ```bash
-uv run pyro migrate-relationships    # convert a document-collection `relationships` into an edge collection
 uv run pyro canonicalize-relations   # rewrite stored edges onto the controlled relation vocabulary
 ```
-
-`migrate-relationships` preserves every edge (it derives `_from`/`_to` from the `source_key`/
-`target_key` fields the old schema already stored). Connecting to an unmigrated database fails
-fast with a message pointing at it, rather than misbehaving quietly.
 
 `canonicalize-relations` collapses synonym edges — `"sends requests to"`, `"routes requests to"`
 and `"calls"` used to be three separate edges between the same pair of systems, because the edge
@@ -99,7 +96,7 @@ All unit tests run offline (no API keys or network required).
 
 ## Configuration
 
-Two layers, kept deliberately separate:
+Three layers, kept deliberately separate:
 
 - **`.env`** — secrets only (API keys). Copy `.env.example` and fill in what you have.
 - **`config/config.yaml`** — everything else: cascade model lists/retry policy, scraping (UA,
@@ -108,6 +105,8 @@ Two layers, kept deliberately separate:
   Loaded by `pyro.config.Settings` (see `src/pyro/config.py`) — edit the YAML to retune the
   pipeline instead of touching code, or override individual keys per-run via
   `run_pipeline.py`'s `OVERRIDES` dict.
+- **`prompts/`** — the actual model instructions for extraction, graph-merge, and relation
+  canonicalization's LLM fallback tier, editable independent of code/config.
 
 API keys (`.env`):
 

@@ -1,9 +1,9 @@
 """merge-graph-pending's cross-company concurrency (cli.py's _merge_graph_pending_impl).
 
-Each company's own merge is already serialized correctly by _MERGE_LOCKS — what's being tested
-here is the newer property: *different* companies run concurrently, bounded by
-settings.merge_pending_concurrency, rather than one after another. A sequential loop would make
-one cron tick's wall-clock time scale linearly with company count."""
+Each company's own merge is already serialized correctly by graph/merge.py's cross-process lock
+(db/merge_locks.py) — what's being tested here is the newer property: *different* companies run
+concurrently, bounded by settings.merge_pending_concurrency, rather than one after another. A
+sequential loop would make one cron tick's wall-clock time scale linearly with company count."""
 
 import threading
 import time

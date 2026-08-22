@@ -12,3 +12,11 @@ def extraction_system_prompt(settings: Settings) -> str:
 
 def extraction_user_prompt(settings: Settings) -> str:
     return load_prompt(settings.prompts.extraction_user)
+
+
+def relation_resolve_system_prompt(settings: Settings) -> str:
+    return load_prompt(settings.prompts.relation_resolve_system)
+
+
+def relation_resolve_user_prompt(settings: Settings) -> str:
+    return load_prompt(settings.prompts.relation_resolve_user)

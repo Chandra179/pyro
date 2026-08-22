@@ -69,6 +69,21 @@ class _FakeDb:
         }
         return name
 
+    def upsert_entities(self, company_name, items):
+        return [
+            self.upsert_entity(
+                company_name,
+                item["name"],
+                item["kind"],
+                item["domain"],
+                alias=item.get("alias"),
+                first_seen_article_id=item.get("first_seen_article_id"),
+                description=item.get("description"),
+                alias_method=item.get("alias_method"),
+            )
+            for item in items
+        ]
+
     def upsert_relationship(
         self,
         company_name,
@@ -83,6 +98,19 @@ class _FakeDb:
         self.relationships.append(
             {"source": source, "target": target, "relation": relation, "invalid_at": None}
         )
+
+    def upsert_relationships(self, company_name, items):
+        for item in items:
+            self.upsert_relationship(
+                company_name,
+                item["source"],
+                item["target"],
+                item["relation"],
+                item.get("as_of"),
+                item.get("source_article_id"),
+                relation_phrase=item.get("relation_phrase"),
+                extra_source_article_ids=item.get("extra_source_article_ids"),
+            )
 
     def invalidate_outgoing_relationships(self, company_name, source, at, exclude_relation=None):
         closed = 0

@@ -1,8 +1,11 @@
 """Pipeline job tracking for the dashboard.
 
-Each submitted job runs scrape -> clean -> extract -> merge-graph on a background
-thread (the underlying `_*_impl` functions are sync and call `asyncio.run`
-internally, so they need their own thread rather than the request's event loop).
+Each submitted job runs scrape -> clean -> extract -> merge-graph on a background thread, calling
+each stage's own orchestration function directly (clean/pipeline.py, extract/pipeline.py,
+graph/merge.py) rather than going through pyro.cli — the CLI's typer commands are one caller of
+those functions, not a layer the dashboard should have to route through. The async ones
+(scrape_urls, run_extraction) are run via `asyncio.run` per call since this all happens on a
+background thread, not the request's event loop.
 
 `JOBS` (below) is the live, in-process working set every route reads — a plain dict, same as
 before. What changed is durability: each job is also written through to ArangoDB's `jobs`
@@ -28,10 +31,11 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Literal
 
-from pyro.cli import _clean_impl, _extract_impl, _merge_graph_impl
+from pyro.clean.pipeline import run_cleaning
 from pyro.config import Settings
 from pyro.db import Database, open_db_from_settings
-from pyro.graph.merge import GraphReporter
+from pyro.extract.pipeline import run_extraction
+from pyro.graph.merge import GraphReporter, run_graph_merge_exclusive
 from pyro.prompts import build_prompts_config
 from pyro.scrape.fetch import scrape_urls
 from pyro.scrape.sitemap import fetch_sitemap_urls
@@ -329,15 +333,18 @@ def _run_job(job: Job) -> None:
                 # otherwise process each other's articles and report each other's counts.
                 job.status = "cleaning"
                 _save()
-                _clean_impl(settings=settings, company_name=job.company_name)
+                run_cleaning(database, settings, company_name=job.company_name)
                 job.status = "extracting"
                 _save()
-                _extract_impl(settings=settings, company_name=job.company_name)
+                asyncio.run(
+                    run_extraction(database, settings, company_name=job.company_name)
+                )
                 job.status = "merging"
                 _save()
-                _merge_graph_impl(
+                run_graph_merge_exclusive(
+                    database,
+                    settings,
                     job.company_name,
-                    settings=settings,
                     reporter=JobGraphReporter(job, database),
                 )
                 job.status = "done"

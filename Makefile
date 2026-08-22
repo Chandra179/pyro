@@ -1,4 +1,4 @@
-.PHONY: install test lint lint-js run sample-run db-up db-down dashboard dashboard-css dashboard-css-watch merge-graph-pending
+.PHONY: install test lint lint-js db-up db-down dashboard merge-graph-pending
 
 install:
 	uv sync

@@ -105,6 +105,83 @@ class RelationshipRepository:
         )
         return key
 
+    def upsert_many(self, company_name: str, items: list[dict]) -> list[str]:
+        """Batched form of `upsert`: one AQL round-trip for a whole article's relationships
+        instead of one round-trip per edge. Each item takes the same keys as `upsert`'s
+        parameters (source/target/relation/as_of/source_article_id/relation_phrase/
+        extra_source_article_ids). Same UPSERT semantics per item, just executed in one FOR loop
+        server-side rather than N separate queries."""
+        if not items:
+            return []
+        docs = []
+        for item in items:
+            source, target, relation = item["source"], item["target"], item["relation"]
+            key = relationship_key(company_name, source, relation, target)
+            source_key = entity_key(company_name, source)
+            target_key = entity_key(company_name, target)
+            new_ids = list(dict.fromkeys(item.get("extra_source_article_ids") or []))
+            source_article_id = item.get("source_article_id")
+            if source_article_id and source_article_id not in new_ids:
+                new_ids.append(source_article_id)
+            docs.append(
+                {
+                    "key": key,
+                    "from_handle": f"{self._entities}/{source_key}",
+                    "to_handle": f"{self._entities}/{target_key}",
+                    "source": source,
+                    "source_key": source_key,
+                    "target": target,
+                    "target_key": target_key,
+                    "relation": relation,
+                    "relation_phrase": item.get("relation_phrase"),
+                    "as_of": item.get("as_of"),
+                    "new_ids": new_ids,
+                }
+            )
+
+        query = """
+        FOR item IN @items
+          UPSERT { _key: item.key }
+          INSERT {
+            _key: item.key,
+            _from: item.from_handle,
+            _to: item.to_handle,
+            company_name: @company_name,
+            source: item.source,
+            source_key: item.source_key,
+            target: item.target,
+            target_key: item.target_key,
+            relation: item.relation,
+            relation_phrase: item.relation_phrase,
+            as_of: item.as_of,
+            source_article_ids: item.new_ids,
+            invalid_at: null,
+            updated_at: @updated_at
+          }
+          UPDATE {
+            source: item.source,
+            source_key: item.source_key,
+            target: item.target,
+            target_key: item.target_key,
+            relation: item.relation,
+            relation_phrase: item.relation_phrase,
+            as_of: item.as_of,
+            source_article_ids: APPEND(
+              OLD.source_article_ids != null
+                ? OLD.source_article_ids
+                : (OLD.source_article_id != null ? [OLD.source_article_id] : []),
+              item.new_ids,
+              true
+            ),
+            updated_at: @updated_at
+          }
+          IN @@col
+          RETURN item.key
+        """
+        # UPDATE deliberately never mentions invalid_at (see `upsert`'s docstring note) — a
+        # routine re-merge must not reopen a validity window invalidate_outgoing closed.
+        return self._query(query, items=docs, company_name=company_name, updated_at=now_iso())
+
     def invalidate_outgoing(
         self,
         company_name: str,

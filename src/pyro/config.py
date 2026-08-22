@@ -96,6 +96,8 @@ class PromptsConfig(BaseModel):
     extraction_user: str = "extraction/default/user.md"
     merge_system: str = "merge/system.md"
     merge_user: str = "merge/user.md"
+    relation_resolve_system: str = "relation_resolve/system.md"
+    relation_resolve_user: str = "relation_resolve/user.md"
 
 
 class ArangoConfig(BaseModel):
@@ -105,6 +107,7 @@ class ArangoConfig(BaseModel):
     entities_collection: str = "entities"
     relationships_collection: str = "relationships"
     jobs_collection: str = "jobs"
+    merge_locks_collection: str = "merge_locks"
 
 
 class ArticleStage(BaseModel):

@@ -53,8 +53,17 @@ class ArticleRepository:
             }
         )
 
-    def exists(self, id: str) -> bool:
-        return self._col.has(id)
+    def existing_ids(self, ids: list[str]) -> set[str]:
+        """Which of `ids` already have a document, in one round-trip — scrape_urls uses this to
+        filter a whole sitemap's worth of URLs at once instead of one existence check per URL."""
+        if not ids:
+            return set()
+        query = """
+        FOR doc IN @@col
+          FILTER doc._key IN @ids
+          RETURN doc._key
+        """
+        return set(self._query(query, ids=ids))
 
     def mark_cleaned(self, id: str, cleaned_text: str) -> None:
         # raw_html is the largest field and unused once cleaned; clearing it here is safe since

@@ -8,6 +8,7 @@ from pyro.db.articles import ArticleRepository
 from pyro.db.connection import ConnectionParams, connect
 from pyro.db.entities import EntityRepository
 from pyro.db.jobs import JobRepository
+from pyro.db.merge_locks import MergeLockRepository
 from pyro.db.models import Article
 from pyro.db.relationships import RelationshipRepository
 
@@ -23,6 +24,7 @@ class Database:
         entities_collection: str = "entities",
         relationships_collection: str = "relationships",
         jobs_collection: str = "jobs",
+        merge_locks_collection: str = "merge_locks",
     ):
         params = ConnectionParams(
             host=host,
@@ -33,6 +35,7 @@ class Database:
             entities_collection=entities_collection,
             relationships_collection=relationships_collection,
             jobs_collection=jobs_collection,
+            merge_locks_collection=merge_locks_collection,
         )
         self._db = connect(params)
         self.articles = ArticleRepository(self._db, articles_collection)
@@ -41,6 +44,7 @@ class Database:
             self._db, relationships_collection, entities_collection
         )
         self.jobs = JobRepository(self._db, jobs_collection)
+        self.merge_locks = MergeLockRepository(self._db, merge_locks_collection)
 
     # No-op: the connection is process-wide and pooled. Kept so `with open_db(...)` reads naturally.
     def close(self) -> None:
@@ -59,8 +63,8 @@ class Database:
     ) -> None:
         self.articles.upsert_raw(id, source_url, title, company_name, raw_html)
 
-    def exists(self, id: str) -> bool:
-        return self.articles.exists(id)
+    def existing_ids(self, ids: list[str]) -> set[str]:
+        return self.articles.existing_ids(ids)
 
     def mark_cleaned(self, id: str, cleaned_text: str) -> None:
         self.articles.mark_cleaned(id, cleaned_text)
@@ -111,27 +115,8 @@ class Database:
 
     # --- entities/relationships: the company-wide graph merged from extracted articles ---
 
-    def upsert_entity(
-        self,
-        company_name: str,
-        name: str,
-        kind: str,
-        domain: str,
-        alias: str | None = None,
-        first_seen_article_id: str | None = None,
-        description: str | None = None,
-        alias_method: str | None = None,
-    ) -> str:
-        return self.entities.upsert(
-            company_name,
-            name,
-            kind,
-            domain,
-            alias,
-            first_seen_article_id,
-            description=description,
-            alias_method=alias_method,
-        )
+    def upsert_entities(self, company_name: str, items: list[dict]) -> list[str]:
+        return self.entities.upsert_many(company_name, items)
 
     def upsert_relationship(
         self,
@@ -154,6 +139,9 @@ class Database:
             relation_phrase=relation_phrase,
             extra_source_article_ids=extra_source_article_ids,
         )
+
+    def upsert_relationships(self, company_name: str, items: list[dict]) -> list[str]:
+        return self.relationships.upsert_many(company_name, items)
 
     def invalidate_outgoing_relationships(
         self,
@@ -181,6 +169,14 @@ class Database:
         self.articles.reset_graph_merged(company_name)
         self.relationships.delete_for_company(company_name)
         self.entities.delete_for_company(company_name)
+
+    # --- cross-process merge lock (graph/merge.py's run_graph_merge_exclusive) ---
+
+    def acquire_merge_lock(self, company_name: str) -> bool:
+        return self.merge_locks.acquire(company_name)
+
+    def release_merge_lock(self, company_name: str) -> None:
+        self.merge_locks.release(company_name)
 
     # --- jobs: dashboard pipeline-run history (api/jobs.py) ---
 

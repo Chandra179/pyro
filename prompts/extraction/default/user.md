@@ -16,7 +16,7 @@ Return strict, valid JSON with exactly two fields:
 
 {{
   "entities": [
-    {{"name": "...", "kind": "service|datastore|queue|external_system|team", "domain": "...", "description": "... or null"}}
+    {{"name": "...", "kind": "service|datastore|queue|external_system|library|model|team", "domain": "...", "description": "... or null"}}
   ],
   "relationships": [
     {{"source": "...", "target": "...", "relation": "...", "as_of": "... or null"}}

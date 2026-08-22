@@ -29,6 +29,7 @@ class ConnectionParams:
     entities_collection: str
     relationships_collection: str
     jobs_collection: str
+    merge_locks_collection: str
 
 
 # ArangoDB's index-create API is idempotent for an identical type+fields+name, so re-running the
@@ -81,6 +82,17 @@ _JOB_INDEXES = [
     {"type": "persistent", "fields": ["created_at"], "name": "idx_jobs_created_at"},
 ]
 
+# expireAfter=0: `expires_at` already stores the absolute expiry time (Unix seconds), not an
+# offset from document creation — see db/merge_locks.py.
+_MERGE_LOCK_INDEXES = [
+    {
+        "type": "ttl",
+        "fields": ["expires_at"],
+        "expireAfter": 0,
+        "name": "idx_merge_locks_expires_at",
+    },
+]
+
 _MIGRATION_HINT = (
     "Collection {name!r} exists as a document collection, but relationships are now stored as "
     "graph edges (_from/_to) so they can be traversed with AQL. Recreate it as an edge "
@@ -127,6 +139,9 @@ def _bootstrap(db: StandardDatabase, params: ConnectionParams) -> None:
         db, params.relationships_collection, edge=True, indexes=_RELATIONSHIP_INDEXES
     )
     _ensure_collection(db, params.jobs_collection, edge=False, indexes=_JOB_INDEXES)
+    _ensure_collection(
+        db, params.merge_locks_collection, edge=False, indexes=_MERGE_LOCK_INDEXES
+    )
 
 
 def connect(params: ConnectionParams) -> StandardDatabase:

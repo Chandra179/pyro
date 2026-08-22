@@ -44,6 +44,7 @@ def connection_params_from_settings(settings: Settings) -> ConnectionParams:
         entities_collection=settings.arango.entities_collection,
         relationships_collection=settings.arango.relationships_collection,
         jobs_collection=settings.arango.jobs_collection,
+        merge_locks_collection=settings.arango.merge_locks_collection,
     )
 
 
@@ -57,6 +58,7 @@ def open_db(
     entities_collection: str = "entities",
     relationships_collection: str = "relationships",
     jobs_collection: str = "jobs",
+    merge_locks_collection: str = "merge_locks",
 ) -> Iterator[Database]:
     db = Database(
         host=host,
@@ -67,6 +69,7 @@ def open_db(
         entities_collection=entities_collection,
         relationships_collection=relationships_collection,
         jobs_collection=jobs_collection,
+        merge_locks_collection=merge_locks_collection,
     )
     try:
         yield db
@@ -87,5 +90,6 @@ def open_db_from_settings(settings: Settings) -> Iterator[Database]:
         entities_collection=params.entities_collection,
         relationships_collection=params.relationships_collection,
         jobs_collection=params.jobs_collection,
+        merge_locks_collection=params.merge_locks_collection,
     ) as db:
         yield db

@@ -8,7 +8,7 @@ import logging
 import re
 from typing import Any, Literal
 
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, Field, model_validator
 
 from pyro.config import Settings
 
@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 # Just a tag now, not a classifier — kept as a shared axis for a future cross-company comparison.
 DOMAINS: list[str] = Settings().domains
 
-EntityKind = Literal["service", "datastore", "queue", "external_system", "team"]
+EntityKind = Literal["service", "datastore", "queue", "external_system", "library", "model", "team"]
 
 # Controlled vocabulary for relationship predicates: `relation` used to be free text, so "writes
 # to"/"writes-to"/"persists to"/"stores data in" became four distinct edges between the same pair
@@ -157,28 +157,29 @@ _SYNONYMS_BY_LENGTH: list[tuple[str, str]] = sorted(
     _RELATION_SYNONYMS.items(), key=lambda kv: -len(kv[0])
 )
 
-# Generic enough not to invent a direction-specific claim the article may not support. Should be
-# rare — see TODO.md item 2 for the fallback-rate check before building anything fancier.
+# Generic enough not to invent a direction-specific claim the article may not support. Used as a
+# placeholder when even the LLM fallback tier (extract/relation_resolve.py) can't place a phrase.
 _FALLBACK_RELATION = "depends_on"
 
 
-def normalize_relation(raw: str) -> str:
-    """Map a model-emitted predicate onto RelationKind.
+def _normalize_relation_deterministic(raw: str) -> tuple[str, bool]:
+    """The free, synchronous tier: exact vocabulary match, then exact synonym, then a synonym
+    matched as the phrase's leading words (dropping a trailing qualifier).
 
-    Tiers, in order: an exact vocabulary value passes through; an exact synonym is rewritten; a
-    synonym appearing as the leading words of the phrase is rewritten (dropping the trailing
-    qualifier); anything left becomes _FALLBACK_RELATION.
+    Returns `(canonical, matched)` — `matched=False` means nothing fit and `canonical` is just
+    `_FALLBACK_RELATION` standing in until the LLM fallback tier gets a chance at it (see
+    `ExtractedRelationship.needs_relation_review` / `extract/relation_resolve.py`).
     """
     collapsed = re.sub(r"[^a-z0-9]+", " ", raw.lower()).strip()
     if not collapsed:
-        return _FALLBACK_RELATION
+        return _FALLBACK_RELATION, False
 
     if collapsed.replace(" ", "_") in RELATION_KINDS:
-        return collapsed.replace(" ", "_")
+        return collapsed.replace(" ", "_"), True
 
     exact = _RELATION_SYNONYMS.get(collapsed)
     if exact is not None:
-        return exact
+        return exact, True
 
     for phrase, canonical in _SYNONYMS_BY_LENGTH:
         # Word-boundary prefix match: "uses for distributed tracing" -> "uses", but "userland" is
@@ -186,11 +187,26 @@ def normalize_relation(raw: str) -> str:
         if collapsed.startswith(phrase) and (
             len(collapsed) == len(phrase) or collapsed[len(phrase)] == " "
         ):
-            return canonical
+            return canonical, True
 
-    # Falling back is silent to callers by design; log so vocabulary drift stays visible.
-    logger.warning("relation %r matched no vocabulary/synonym entry; falling back to %r", raw, _FALLBACK_RELATION)
-    return _FALLBACK_RELATION
+    return _FALLBACK_RELATION, False
+
+
+def normalize_relation(raw: str) -> str:
+    """Public, deterministic-only entry point — used by `ExtractedRelationship`'s validator (which
+    must stay synchronous so extraction is offline-testable) and by `graph/backfill.py`'s one-off
+    vocabulary rewrite. Callers that can afford an async LLM call for what this tier misses should
+    use `extract/relation_resolve.py`'s `apply_relation_fallback` instead/in addition — this
+    function alone always resolves to something (falling back silently otherwise), so use it
+    directly only when that fallback is an acceptable final answer.
+    """
+    canonical, matched = _normalize_relation_deterministic(raw)
+    if not matched:
+        # Falling back is silent to callers by design; log so vocabulary drift stays visible.
+        logger.warning(
+            "relation %r matched no vocabulary/synonym entry; falling back to %r", raw, canonical
+        )
+    return canonical
 
 
 class ExtractedEntity(BaseModel):
@@ -208,6 +224,13 @@ class ExtractedRelationship(BaseModel):
     # Model's original wording, kept when it differed from the canonical predicate.
     relation_phrase: str | None = None
     as_of: str | None = None
+    # True when the deterministic tier found no vocabulary/synonym match at all, so `relation` is
+    # currently just `_FALLBACK_RELATION` as a placeholder — extract/pipeline.py runs the async
+    # LLM fallback tier (extract/relation_resolve.py) over every relationship still flagged this
+    # way once a whole article's chunks are parsed, mirroring graph/resolve.py's two-tier pattern
+    # for entity names. Excluded from model_dump() — nothing downstream of a resolved graph needs
+    # this, it only exists as a same-process signal between the two tiers.
+    needs_relation_review: bool = Field(default=False, exclude=True)
 
     @model_validator(mode="before")
     @classmethod
@@ -217,8 +240,15 @@ class ExtractedRelationship(BaseModel):
         raw = data.get("relation")
         if not isinstance(raw, str):
             return data
-        canonical = normalize_relation(raw)
-        data = {**data, "relation": canonical}
+        canonical, matched = _normalize_relation_deterministic(raw)
+        if not matched:
+            logger.warning(
+                "relation %r matched no vocabulary/synonym entry; falling back to %r pending "
+                "LLM review",
+                raw,
+                canonical,
+            )
+        data = {**data, "relation": canonical, "needs_relation_review": not matched}
         if data.get("relation_phrase") is None and raw.strip() != canonical:
             data["relation_phrase"] = raw.strip()
         return data

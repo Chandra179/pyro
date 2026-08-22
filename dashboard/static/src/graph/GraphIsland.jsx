@@ -7,6 +7,8 @@ const KIND_COLOR = {
   datastore: "#0ea5e9",
   queue: "#f59e0b",
   external_system: "#a855f7",
+  library: "#10b981",
+  model: "#ec4899",
 };
 const DEFAULT_COLOR = "#6366f1";
 const KIND_RADIUS = { datastore: "20px", queue: "4px" };

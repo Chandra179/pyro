@@ -48,12 +48,17 @@ async def scrape_urls(
     limit: int | None = None,
     config: ScrapeConfig = _DEFAULT_SCRAPE_CONFIG,
 ) -> int:
-    """Render each URL with Playwright and store raw HTML in SQLite.
+    """Render each URL with Playwright and store raw HTML in ArangoDB.
 
     Skips URLs whose normalized id already has a row (dedup guarantee).
     Returns the number of newly scraped articles.
     """
-    pending = [u for u in urls if not db.exists(normalize_url(u))]
+    # One batched existence check for the whole sitemap instead of one round-trip per URL — matters
+    # once a company's history is years of posts, since this runs serially before any concurrent
+    # fetching starts.
+    ids_by_url = {u: normalize_url(u) for u in urls}
+    already_scraped = db.existing_ids(list(ids_by_url.values()))
+    pending = [u for u, article_id in ids_by_url.items() if article_id not in already_scraped]
     if limit is not None:
         pending = pending[:limit]
 

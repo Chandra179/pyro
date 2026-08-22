@@ -2,19 +2,21 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import threading
-from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 
 import typer
 from dotenv import load_dotenv
 
-from pyro.clean.clean import clean_html
+from pyro.clean.pipeline import run_cleaning
 from pyro.config import Settings
 from pyro.db import open_db_from_settings
 from pyro.extract.pipeline import run_extraction
 from pyro.graph.backfill import canonicalize_relations
-from pyro.graph.merge import GraphReporter, run_graph_merge
+from pyro.graph.merge import (
+    GraphMergeInProgress,
+    GraphReporter,
+    run_graph_merge_exclusive,
+)
 from pyro.scrape.fetch import scrape_urls
 from pyro.scrape.sitemap import fetch_sitemap_urls
 
@@ -79,15 +81,8 @@ def _clean_impl(
     """
     settings = settings or Settings()
     with open_db_from_settings(settings) as database:
-        articles = database.fetch_unprocessed(
-            "clean", limit=limit, company_name=company_name
-        )
-        for article in articles:
-            cleaned = clean_html(
-                article.raw_html, settings.code_block_line_threshold, settings.clean
-            )
-            database.mark_cleaned(article.id, cleaned)
-        typer.echo(f"cleaned {len(articles)} articles")
+        count = run_cleaning(database, settings, limit=limit, company_name=company_name)
+    typer.echo(f"cleaned {count} articles")
 
 
 @app.command()
@@ -122,15 +117,6 @@ def extract(
     _extract_impl(limit=limit, company_name=company_name)
 
 
-class GraphMergeInProgress(Exception):
-    """Raised when a graph merge is already running for this company_name."""
-
-
-# One lock per company_name, shared by every caller of _merge_graph_impl — the single choke point
-# that makes it impossible for two merge runs to race on the same company's entity graph.
-_MERGE_LOCKS: dict[str, threading.Lock] = defaultdict(threading.Lock)
-
-
 def _merge_graph_impl(
     company_name: str,
     settings: Settings | None = None,
@@ -138,26 +124,19 @@ def _merge_graph_impl(
 ) -> None:
     """Fold company_name's not-yet-merged extracted articles into its entity graph.
 
-    Raises GraphMergeInProgress if a merge is already in flight for this company_name.
+    Raises GraphMergeInProgress (see graph/merge.py) if a merge is already in flight for this
+    company_name.
     """
-    lock = _MERGE_LOCKS[company_name]
-    if not lock.acquire(blocking=False):
-        raise GraphMergeInProgress(company_name)
-    try:
-        settings = settings or Settings()
-        with open_db_from_settings(settings) as database:
-            result = asyncio.run(
-                run_graph_merge(database, settings, company_name, reporter)
-            )
-        if result["articles_merged"]:
-            typer.echo(
-                f"merged {result['articles_merged']} articles "
-                f"({result['entities']} entities, {result['relationships']} relationships total)"
-            )
-        else:
-            typer.echo("no new articles to merge; graph already up to date")
-    finally:
-        lock.release()
+    settings = settings or Settings()
+    with open_db_from_settings(settings) as database:
+        result = run_graph_merge_exclusive(database, settings, company_name, reporter)
+    if result["articles_merged"]:
+        typer.echo(
+            f"merged {result['articles_merged']} articles "
+            f"({result['entities']} entities, {result['relationships']} relationships total)"
+        )
+    else:
+        typer.echo("no new articles to merge; graph already up to date")
 
 
 @app.command(name="merge-graph")
@@ -172,8 +151,8 @@ def _merge_graph_pending_impl(settings: Settings | None = None) -> None:
     Safe to call repeatedly (idempotent, no-op if nothing pending). Skips a company on
     GraphMergeInProgress rather than failing the whole batch. Runs up to
     `settings.merge_pending_concurrency` companies at once — each company's own merge is
-    still serialized by `_MERGE_LOCKS`, so this keeps cron tick time from scaling linearly
-    with company count.
+    still serialized by graph/merge.py's per-company lock, so this keeps cron tick time from
+    scaling linearly with company count.
     """
     settings = settings or Settings()
     with open_db_from_settings(settings) as database:

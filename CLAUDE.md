@@ -37,14 +37,9 @@ uv run pyro graph --company-name X                        # list stored entities
 
 Or edit the constants at the top of `run_pipeline.py` (company/sitemap/limit) and run
 `uv run python run_pipeline.py` — the intended way to point the whole pipeline at a new blog.
-(README and the Makefile's `.PHONY` list reference `make run` for this, but no `run:` recipe
-currently exists in `Makefile` — use the `uv run` form, or add the recipe back if you need it.)
 
 `canonicalize-relations` is a one-off command that rewrites already-stored edges onto the
-controlled relation vocabulary; a no-op once run, and unnecessary for a fresh database. (README's
-"One-off maintenance commands" section also documents `migrate-relationships` — that command and
-its underlying `migrate_relationships_to_edges` helper were removed from `src/pyro/db/` since the
-README was last updated; the README is stale on that point.)
+controlled relation vocabulary; a no-op once run, and unnecessary for a fresh database.
 
 Dashboard CSS (Tailwind, compiled output is committed): after editing template classes or
 `dashboard/static/src/input.css`, run `cd dashboard && npm run build:css` (or `watch:css`).
@@ -70,19 +65,27 @@ TokenRouter → paid OpenAI), gated purely on which keys are set — see `src/py
 
 Every pipeline stage has a plain `_stage_impl(...)` function taking an optional `Settings`
 override, plus a thin `@app.command()` typer wrapper with no `settings` param (typer can't parse
-a `Settings`-typed CLI arg). **Programmatic callers must call the `_impl` functions directly** —
-`run_pipeline.py`, `run-all`, and `api/jobs.py`'s background job runner all do this. The
-underscore means "not a typer command," not "private" — these are the real internal API.
+a `Settings`-typed CLI arg). `run_pipeline.py` and `run-all` call these `_impl` functions
+directly — the underscore means "not a typer command," not "private." **The actual orchestration
+logic for each stage lives in that stage's own module**, not in `cli.py` itself:
+`clean/pipeline.py::run_cleaning`, `extract/pipeline.py::run_extraction`,
+`graph/merge.py::run_graph_merge`/`run_graph_merge_exclusive` — `cli.py`'s `_impl` functions are
+thin wrappers over these (open a connection, call the module function, `typer.echo` the result).
+`api/jobs.py`'s background job runner calls these module functions directly too, not `pyro.cli` —
+the dashboard is one caller of the domain modules, not a layer routed through the CLI.
 
-Graph merges for a given `company_name` are serialized via a per-company `threading.Lock` in
-`cli.py` (`_MERGE_LOCKS`), shared by every entry point (full pipeline jobs, the dashboard's
-manual trigger, cron). This is the single choke point that makes it impossible for two merges to
-race on the same company's graph — don't add a second path into `run_graph_merge` that bypasses
-it.
+Graph merges for a given `company_name` are serialized via a lock **document in ArangoDB**
+(`db/merge_locks.py`, acquired/released by `graph/merge.py::run_graph_merge_exclusive`), shared by
+every entry point (full pipeline jobs, the dashboard's manual trigger, cron). It's a DB document
+rather than an in-memory `threading.Lock` specifically because cron (`cron/merge_pending.sh`) runs
+as its own OS process, separate from the dashboard's — an in-memory lock can't be seen across that
+boundary. A TTL index expires an abandoned lock if its holder crashes before releasing. This is
+the single choke point that makes it impossible for two merges to race on the same company's
+graph — don't add a second path into `run_graph_merge` that bypasses it.
 
 ### Storage (`src/pyro/db/`)
 
-One ArangoDB database, four collections:
+One ArangoDB database, five collections:
 
 - `articles` (document, scoped by `company_name`) — pipeline state per scraped article (raw HTML →
   cleaned → extracted), see `db/articles.py`.
@@ -94,6 +97,8 @@ One ArangoDB database, four collections:
 - `jobs` (document, not company-scoped) — dashboard pipeline-run history, including each merge
   call's full output/reasoning; written by `api/jobs.py`, not rendered by any dashboard page (see
   `db/jobs.py`).
+- `merge_locks` (document, one per `company_name`) — the cross-process merge lock described above;
+  TTL-indexed so an abandoned lock self-expires (see `db/merge_locks.py`).
 
 `Database` (`db/database.py`) is the facade over all four — import it from `pyro.db`, not from
 the submodules directly, so internal layout can move freely. `open_db_from_settings` is the
